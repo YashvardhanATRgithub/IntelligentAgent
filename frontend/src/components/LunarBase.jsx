@@ -48,6 +48,7 @@ function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isT
     const pathProgress = useRef(1);
     const currentPath = useRef([]);
     const isMoving = useRef(false);
+    const targetPosition = useRef(new THREE.Vector3(0, 0, 0));
 
     // Scale factor for bigger agents
     const AGENT_SCALE = 1.8;
@@ -70,26 +71,67 @@ function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isT
 
     useEffect(() => {
         if (groupRef.current && currentLocation !== previousLocation && previousLocation) {
-            const path = getPathBetweenLocations(previousLocation, currentLocation);
-            currentPath.current = path;
-            pathProgress.current = 0;
-            isMoving.current = true;
+            // Only start walking if not currently talking
+            if (!isTalking && !speechBubble) {
+                const path = getPathBetweenLocations(previousLocation, currentLocation);
+                currentPath.current = path;
+                pathProgress.current = 0;
+                isMoving.current = true;
+            } else {
+                // If talking, just update target - will smoothly interpolate
+                isMoving.current = false;
+            }
         }
-    }, [currentLocation, previousLocation]);
+    }, [currentLocation, previousLocation, isTalking, speechBubble]);
+
+    // Stop walking immediately when talk starts
+    useEffect(() => {
+        if (isTalking || speechBubble) {
+            isMoving.current = false;
+            pathProgress.current = 1;
+        }
+    }, [isTalking, speechBubble]);
 
     useFrame((state, delta) => {
         if (!groupRef.current) return;
 
         const targetPos = getBasePosition(currentLocation, agent.name);
+        targetPosition.current.set(...targetPos);
         const current = groupRef.current.position;
 
+        // TALKING STATE - Highest priority, stop all movement
+        if (isTalking || speechBubble) {
+            // Smooth interpolation to target position
+            current.lerp(targetPosition.current, 0.08);
+            current.y = 0;
+
+            // Talking animation
+            talkPhase.current += delta * 4;
+            if (headRef.current) {
+                headRef.current.rotation.x = Math.sin(talkPhase.current) * 0.15;
+                headRef.current.rotation.z = Math.sin(talkPhase.current * 0.6) * 0.08;
+            }
+            // Gesture with right arm
+            if (rightArmRef.current) {
+                rightArmRef.current.rotation.x = -0.6 + Math.sin(talkPhase.current) * 0.3;
+                rightArmRef.current.rotation.z = -0.35 + Math.sin(talkPhase.current * 1.2) * 0.2;
+            }
+            // Reset legs smoothly
+            if (leftLegRef.current) leftLegRef.current.rotation.x *= 0.9;
+            if (rightLegRef.current) rightLegRef.current.rotation.x *= 0.9;
+            if (leftArmRef.current) leftArmRef.current.rotation.x *= 0.9;
+
+            return; // Don't process walking
+        }
+
+        // WALKING STATE - Move along path
         if (isMoving.current && currentPath.current.length > 0) {
-            pathProgress.current += delta * 0.12; // Slow for visibility
+            pathProgress.current += delta * 0.12;
 
             if (pathProgress.current >= 1) {
                 pathProgress.current = 1;
                 isMoving.current = false;
-                current.set(...targetPos);
+                current.lerp(targetPosition.current, 0.1);
             } else {
                 const path = currentPath.current;
                 const totalSegments = path.length - 1;
@@ -101,8 +143,8 @@ function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isT
                 const end = new THREE.Vector3(...path[segmentIndex + 1]);
                 const pos = start.clone().lerp(end, segmentT);
 
-                current.copy(pos);
-                current.y = 0;
+                current.lerp(pos, 0.15); // Smooth even during walk
+                current.y = Math.abs(Math.sin(walkPhase.current * 2)) * 0.1;
 
                 const direction = new THREE.Vector3().subVectors(end, start).normalize();
                 if (direction.length() > 0.01) {
@@ -117,44 +159,33 @@ function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isT
                 if (rightLegRef.current) rightLegRef.current.rotation.x = -walkAngle * 0.5;
                 if (leftArmRef.current) leftArmRef.current.rotation.x = -walkAngle * 0.3;
                 if (rightArmRef.current) rightArmRef.current.rotation.x = walkAngle * 0.3;
-
-                groupRef.current.position.y = Math.abs(Math.sin(walkPhase.current * 2)) * 0.1;
             }
-        } else {
-            const target = new THREE.Vector3(...targetPos);
-            current.lerp(target, 0.03);
 
-            if (leftLegRef.current) leftLegRef.current.rotation.x *= 0.92;
-            if (rightLegRef.current) rightLegRef.current.rotation.x *= 0.92;
-            if (leftArmRef.current) leftArmRef.current.rotation.x *= 0.92;
-            if (rightArmRef.current) rightArmRef.current.rotation.x *= 0.92;
-        }
-
-        // Talking animation
-        if (isTalking || speechBubble) {
-            talkPhase.current += delta * 4;
-            if (headRef.current) {
-                headRef.current.rotation.x = Math.sin(talkPhase.current) * 0.15;
-                headRef.current.rotation.z = Math.sin(talkPhase.current * 0.6) * 0.08;
-            }
-            if (rightArmRef.current && !isMoving.current) {
-                rightArmRef.current.rotation.x = -0.6 + Math.sin(talkPhase.current) * 0.3;
-                rightArmRef.current.rotation.z = -0.35 + Math.sin(talkPhase.current * 1.2) * 0.2;
-            }
-        } else {
+            // Reset head during walk
             if (headRef.current) {
                 headRef.current.rotation.x *= 0.9;
                 headRef.current.rotation.z *= 0.9;
             }
+            return;
         }
 
-        // Idle breathing
-        if (!isMoving.current && !isTalking && !speechBubble) {
-            const breathe = Math.sin(state.clock.elapsedTime * 1.2) * 0.02;
-            groupRef.current.scale.setScalar(AGENT_SCALE * (1 + breathe));
-        } else {
-            groupRef.current.scale.setScalar(AGENT_SCALE);
+        // IDLE STATE - Smooth interpolation & breathing
+        current.lerp(targetPosition.current, 0.05); // Smooth transition always
+        current.y = 0;
+
+        // Reset all limbs smoothly
+        if (leftLegRef.current) leftLegRef.current.rotation.x *= 0.92;
+        if (rightLegRef.current) rightLegRef.current.rotation.x *= 0.92;
+        if (leftArmRef.current) leftArmRef.current.rotation.x *= 0.92;
+        if (rightArmRef.current) rightArmRef.current.rotation.x *= 0.92;
+        if (headRef.current) {
+            headRef.current.rotation.x *= 0.9;
+            headRef.current.rotation.z *= 0.9;
         }
+
+        // Subtle breathing animation
+        const breathe = Math.sin(state.clock.elapsedTime * 1.2) * 0.02;
+        groupRef.current.scale.setScalar(AGENT_SCALE * (1 + breathe));
     });
 
     const getRoleColor = () => {
