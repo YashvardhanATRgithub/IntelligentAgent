@@ -1,0 +1,318 @@
+.isometric-container {
+    background: linear-gradient(135deg, #0a0a1a 0%, #1a1a3e 50%, #0f0f2d 100%);
+    border-radius: 20px;
+    padding: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    overflow: hidden;
+    position: relative;
+}
+
+.isometric-container::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background:
+        radial-gradient(circle at 20% 80%, rgba(108, 92, 231, 0.1) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(0, 206, 201, 0.1) 0%, transparent 50%);
+    pointer-events: none;
+}
+
+.station-title {
+    text-align: center;
+    margin: 0 0 24px 0;
+    font-size: 1.8rem;
+    color: #fff;
+    text-shadow: 0 0 20px rgba(0, 206, 201, 0.5);
+}
+
+.isometric-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(2, 1fr);
+    gap: 16px;
+    perspective: 1000px;
+}
+
+/* Isometric Room */
+.isometric-room {
+    position: relative;
+    height: 200px;
+    transform-style: preserve-3d;
+    transition: transform 0.3s ease;
+}
+
+.isometric-room:hover {
+    transform: translateY(-5px);
+}
+
+.room-floor {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(145deg,
+            rgba(var(--room-color-rgb, 44, 62, 80), 0.4) 0%,
+            rgba(var(--room-color-rgb, 44, 62, 80), 0.2) 100%);
+    background-color: var(--room-color);
+    opacity: 0.9;
+    border-radius: 12px;
+    transform: rotateX(10deg);
+    transform-origin: bottom center;
+    box-shadow:
+        0 20px 40px rgba(0, 0, 0, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    overflow: hidden;
+}
+
+/* 3D walls effect */
+.room-walls {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+.wall-left {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 8px;
+    background: linear-gradient(90deg,
+            rgba(255, 255, 255, 0.1) 0%,
+            transparent 100%);
+}
+
+.wall-right {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 8px;
+    background: linear-gradient(180deg,
+            rgba(255, 255, 255, 0.15) 0%,
+            transparent 100%);
+}
+
+.room-content {
+    position: relative;
+    height: 100%;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+}
+
+.room-icon {
+    font-size: 2rem;
+    margin-bottom: 4px;
+}
+
+.room-name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+    margin-bottom: 12px;
+}
+
+/* Agents in room */
+.agents-in-room {
+    flex: 1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 8px;
+    padding-bottom: 8px;
+}
+
+/* Agent sprite */
+.agent-sprite {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    animation: agentBounce 2s ease-in-out infinite;
+    animation-delay: calc(var(--agent-index) * 0.3s);
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.agent-sprite:hover {
+    transform: scale(1.1);
+}
+
+@keyframes agentBounce {
+
+    0%,
+    100% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-4px);
+    }
+}
+
+.agent-body {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.agent-head {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--agent-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    box-shadow:
+        0 4px 8px rgba(0, 0, 0, 0.3),
+        inset 0 2px 4px rgba(255, 255, 255, 0.2);
+    z-index: 2;
+}
+
+.agent-torso {
+    width: 20px;
+    height: 24px;
+    background: var(--agent-color);
+    border-radius: 4px 4px 8px 8px;
+    margin-top: -4px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.agent-sprite.robot .agent-head {
+    background: linear-gradient(135deg, #9b59b6 0%, #6c5ce7 100%);
+    border: 2px solid #00cec9;
+}
+
+.agent-sprite.robot .agent-torso {
+    background: linear-gradient(135deg, #2c3e50 0%, #1a1a2e 100%);
+    border: 1px solid #6c5ce7;
+}
+
+.agent-name-tag {
+    font-size: 0.6rem;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-top: 4px;
+    white-space: nowrap;
+}
+
+/* Speech bubble */
+.speech-bubble {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: white;
+    color: #333;
+    padding: 8px 12px;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    max-width: 150px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    animation: bubbleIn 0.3s ease;
+    z-index: 10;
+    margin-bottom: 8px;
+}
+
+.speech-bubble::after {
+    content: '';
+    position: absolute;
+    bottom: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 8px solid transparent;
+    border-top-color: white;
+    border-bottom: 0;
+}
+
+.speech-bubble.fade {
+    opacity: 0.6;
+}
+
+@keyframes bubbleIn {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(10px) scale(0.8);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0) scale(1);
+    }
+}
+
+/* Activity indicator */
+.activity-indicator {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    font-size: 0.9rem;
+    background: rgba(0, 0, 0, 0.8);
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: pulse 1.5s ease infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.2);
+    }
+}
+
+/* Legend */
+.station-legend {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.legend-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+    .isometric-grid {
+        grid-template-columns: repeat(2, 1fr);
+        grid-template-rows: repeat(4, 1fr);
+    }
+
+    .isometric-room {
+        height: 180px;
+    }
+}

@@ -1,0 +1,289 @@
+/* Agent Panel - Side panel for agent details */
+
+.agent-panel {
+    position: fixed;
+    right: 0;
+    top: 0;
+    width: 380px;
+    height: 100vh;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border-left: 2px solid #FF6B35;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    animation: slideIn 0.3s ease-out;
+    box-shadow: -5px 0 30px rgba(0, 0, 0, 0.5);
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+    }
+
+    to {
+        transform: translateX(0);
+    }
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    background: rgba(255, 107, 53, 0.2);
+    border-bottom: 1px solid rgba(255, 107, 53, 0.3);
+}
+
+.panel-header h2 {
+    margin: 0;
+    color: #FF6B35;
+    font-size: 1.3rem;
+}
+
+.panel-header .close-btn {
+    background: transparent;
+    border: none;
+    color: #FF6B35;
+    font-size: 1.5rem;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.panel-header .close-btn:hover {
+    transform: scale(1.2);
+}
+
+.panel-tabs {
+    display: flex;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.panel-tabs button {
+    flex: 1;
+    padding: 0.8rem 0.5rem;
+    background: transparent;
+    border: none;
+    color: #888;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.panel-tabs button:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.panel-tabs button.active {
+    color: #FF6B35;
+    border-bottom: 2px solid #FF6B35;
+}
+
+.panel-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+}
+
+.loading {
+    text-align: center;
+    padding: 2rem;
+    color: #888;
+}
+
+.empty {
+    text-align: center;
+    color: #666;
+    font-style: italic;
+    padding: 1rem;
+}
+
+/* State Tab */
+.state-tab .stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.8rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.state-tab .label {
+    color: #888;
+    font-size: 0.9rem;
+}
+
+.state-tab .value {
+    color: #fff;
+    font-weight: 500;
+}
+
+.energy-bar {
+    width: 120px;
+    height: 20px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    overflow: hidden;
+    position: relative;
+}
+
+.energy-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #FF6B35, #FFD700);
+    transition: width 0.3s;
+}
+
+.energy-bar span {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.75rem;
+    color: #fff;
+}
+
+/* Memories Tab */
+.memory-item {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 0.8rem;
+    margin-bottom: 0.8rem;
+    border-left: 3px solid #888;
+}
+
+.memory-item.observation {
+    border-left-color: #4CAF50;
+}
+
+.memory-item.dialogue {
+    border-left-color: #2196F3;
+}
+
+.memory-item.reflection {
+    border-left-color: #9C27B0;
+}
+
+.memory-item.action {
+    border-left-color: #FF9800;
+}
+
+.memory-meta {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+}
+
+.memory-type {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    color: #888;
+}
+
+.memory-importance {
+    font-size: 0.75rem;
+    color: #FFD700;
+}
+
+.memory-content {
+    color: #ddd;
+    font-size: 0.9rem;
+    margin: 0;
+    line-height: 1.4;
+}
+
+.memory-source {
+    display: block;
+    margin-top: 0.5rem;
+    font-size: 0.75rem;
+    color: #666;
+}
+
+/* Relationships Tab */
+.relationship-item {
+    padding: 0.8rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.rel-name {
+    color: #fff;
+    margin-bottom: 0.5rem;
+}
+
+.rel-bar {
+    width: 100%;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.rel-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s;
+}
+
+.rel-fill.positive {
+    background: linear-gradient(90deg, #4CAF50, #8BC34A);
+}
+
+.rel-fill.neutral {
+    background: linear-gradient(90deg, #FF9800, #FFC107);
+}
+
+.rel-fill.negative {
+    background: linear-gradient(90deg, #f44336, #E91E63);
+}
+
+.rel-stats {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.3rem;
+    font-size: 0.8rem;
+    color: #888;
+}
+
+.sentiment.positive {
+    color: #4CAF50;
+}
+
+.sentiment.neutral {
+    color: #FF9800;
+}
+
+.sentiment.negative {
+    color: #f44336;
+}
+
+/* Plan Tab */
+.plan-item {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.8rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+    margin-bottom: 0.5rem;
+    border-left: 3px solid #FF6B35;
+}
+
+.plan-item.completed {
+    opacity: 0.5;
+    border-left-color: #4CAF50;
+}
+
+.plan-time {
+    color: #FF6B35;
+    font-weight: 600;
+    min-width: 60px;
+}
+
+.plan-activity {
+    color: #fff;
+    flex: 1;
+}
+
+.plan-location {
+    color: #888;
+    font-size: 0.85rem;
+    width: 100%;
+}
