@@ -33,3 +33,4 @@ frontend/dist/
 # Cache
 .cache/
 *.faiss
+generative_agents/

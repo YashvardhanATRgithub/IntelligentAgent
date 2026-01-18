@@ -34,8 +34,12 @@ function getPathBetweenLocations(fromLoc, toLoc) {
     return [from.position, LOCATIONS[0].position, to.position];
 }
 
-// BIGGER 3D Humanoid Agent with path-based walking
-function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isTalking, allAgents }) {
+// Stanford-style frame-counter based movement
+// Movement is synchronized: move fixed distance per frame, snap at end
+const MOVE_SPEED = 0.8; // Units per frame (tuned for smooth movement)
+const FRAMES_PER_MOVE = 60; // Frames to complete one location move
+
+function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isTalking, allAgents, isPaused }) {
     const groupRef = useRef();
     const leftArmRef = useRef();
     const rightArmRef = useRef();
@@ -45,123 +49,121 @@ function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isT
 
     const walkPhase = useRef(0);
     const talkPhase = useRef(0);
-    const pathProgress = useRef(1);
-    const currentPath = useRef([]);
-    const isMoving = useRef(false);
-    const targetPosition = useRef(new THREE.Vector3(0, 0, 0));
 
-    // Scale factor for bigger agents
+    // Stanford-style frame counter
+    const executeCount = useRef(0);
+    const moveTarget = useRef(null);
+    const moveStart = useRef(null);
+    const queuedMove = useRef(null); // Queue next move if one is in progress
+
     const AGENT_SCALE = 1.8;
 
     const getBasePosition = (locationName, agentName) => {
         const location = LOCATIONS.find(l => l.name === locationName);
-        if (!location) return [0, 0, 0];
+        if (!location) return new THREE.Vector3(0, 0, 0);
 
         const agentsAtLoc = allAgents.filter(a => a.location === locationName);
         const idx = agentsAtLoc.findIndex(a => a.name === agentName);
         const angle = (idx / Math.max(agentsAtLoc.length, 1)) * Math.PI * 2;
         const radius = 6;
 
-        return [
+        return new THREE.Vector3(
             location.position[0] + Math.cos(angle) * radius,
             0,
             location.position[2] + Math.sin(angle) * radius
-        ];
+        );
     };
 
+    // When location changes, queue the move
     useEffect(() => {
-        if (groupRef.current && currentLocation !== previousLocation && previousLocation) {
-            // Only start walking if not currently talking
-            if (!isTalking && !speechBubble) {
-                const path = getPathBetweenLocations(previousLocation, currentLocation);
-                currentPath.current = path;
-                pathProgress.current = 0;
-                isMoving.current = true;
+        if (currentLocation !== previousLocation && previousLocation) {
+            const target = getBasePosition(currentLocation, agent.name);
+
+            if (executeCount.current > 0) {
+                // Movement in progress - queue this move
+                queuedMove.current = target;
             } else {
-                // If talking, just update target - will smoothly interpolate
-                isMoving.current = false;
+                // Start new move
+                const current = groupRef.current?.position || new THREE.Vector3();
+                moveStart.current = current.clone();
+                moveTarget.current = target;
+                executeCount.current = FRAMES_PER_MOVE;
             }
         }
-    }, [currentLocation, previousLocation, isTalking, speechBubble]);
-
-    // Stop walking immediately when talk starts
-    useEffect(() => {
-        if (isTalking || speechBubble) {
-            isMoving.current = false;
-            pathProgress.current = 1;
-        }
-    }, [isTalking, speechBubble]);
+    }, [currentLocation, previousLocation, agent.name]);
 
     useFrame((state, delta) => {
         if (!groupRef.current) return;
+        if (isPaused) return; // Pause support
 
-        const targetPos = getBasePosition(currentLocation, agent.name);
-        targetPosition.current.set(...targetPos);
         const current = groupRef.current.position;
 
-        // TALKING STATE - Highest priority, stop all movement
+        // TALKING STATE - highest priority
         if (isTalking || speechBubble) {
-            // Smooth interpolation to target position
-            current.lerp(targetPosition.current, 0.08);
-            current.y = 0;
-
-            // Talking animation
             talkPhase.current += delta * 4;
             if (headRef.current) {
                 headRef.current.rotation.x = Math.sin(talkPhase.current) * 0.15;
                 headRef.current.rotation.z = Math.sin(talkPhase.current * 0.6) * 0.08;
             }
-            // Gesture with right arm
             if (rightArmRef.current) {
                 rightArmRef.current.rotation.x = -0.6 + Math.sin(talkPhase.current) * 0.3;
                 rightArmRef.current.rotation.z = -0.35 + Math.sin(talkPhase.current * 1.2) * 0.2;
             }
-            // Reset legs smoothly
+            // Reset legs
             if (leftLegRef.current) leftLegRef.current.rotation.x *= 0.9;
             if (rightLegRef.current) rightLegRef.current.rotation.x *= 0.9;
             if (leftArmRef.current) leftArmRef.current.rotation.x *= 0.9;
 
-            return; // Don't process walking
+            // Still move to target if needed (smooth slide while talking)
+            if (moveTarget.current) {
+                current.lerp(moveTarget.current, 0.05);
+            }
+            return;
         }
 
-        // WALKING STATE - Move along path
-        if (isMoving.current && currentPath.current.length > 0) {
-            pathProgress.current += delta * 0.12;
+        // MOVING STATE - Stanford frame counter approach
+        if (executeCount.current > 0 && moveTarget.current && moveStart.current) {
+            executeCount.current--;
 
-            if (pathProgress.current >= 1) {
-                pathProgress.current = 1;
-                isMoving.current = false;
-                current.lerp(targetPosition.current, 0.1);
-            } else {
-                const path = currentPath.current;
-                const totalSegments = path.length - 1;
-                const segmentProgress = pathProgress.current * totalSegments;
-                const segmentIndex = Math.min(Math.floor(segmentProgress), totalSegments - 1);
-                const segmentT = segmentProgress - segmentIndex;
+            // Calculate progress (0 to 1)
+            const progress = 1 - (executeCount.current / FRAMES_PER_MOVE);
 
-                const start = new THREE.Vector3(...path[segmentIndex]);
-                const end = new THREE.Vector3(...path[segmentIndex + 1]);
-                const pos = start.clone().lerp(end, segmentT);
+            // Linear interpolation from start to target
+            current.lerpVectors(moveStart.current, moveTarget.current, progress);
+            current.y = Math.abs(Math.sin(walkPhase.current * 2)) * 0.1; // Bounce
 
-                current.lerp(pos, 0.15); // Smooth even during walk
-                current.y = Math.abs(Math.sin(walkPhase.current * 2)) * 0.1;
-
-                const direction = new THREE.Vector3().subVectors(end, start).normalize();
-                if (direction.length() > 0.01) {
-                    const targetAngle = Math.atan2(direction.x, direction.z);
-                    groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, targetAngle, 0.1);
-                }
-
-                walkPhase.current += delta * 5;
-                const walkAngle = Math.sin(walkPhase.current);
-
-                if (leftLegRef.current) leftLegRef.current.rotation.x = walkAngle * 0.5;
-                if (rightLegRef.current) rightLegRef.current.rotation.x = -walkAngle * 0.5;
-                if (leftArmRef.current) leftArmRef.current.rotation.x = -walkAngle * 0.3;
-                if (rightArmRef.current) rightArmRef.current.rotation.x = walkAngle * 0.3;
+            // Face movement direction
+            const direction = new THREE.Vector3().subVectors(moveTarget.current, moveStart.current);
+            if (direction.length() > 0.1) {
+                const targetAngle = Math.atan2(direction.x, direction.z);
+                groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, targetAngle, 0.15);
             }
 
-            // Reset head during walk
+            // Walking animation
+            walkPhase.current += delta * 6;
+            const walkAngle = Math.sin(walkPhase.current);
+            if (leftLegRef.current) leftLegRef.current.rotation.x = walkAngle * 0.5;
+            if (rightLegRef.current) rightLegRef.current.rotation.x = -walkAngle * 0.5;
+            if (leftArmRef.current) leftArmRef.current.rotation.x = -walkAngle * 0.3;
+            if (rightArmRef.current) rightArmRef.current.rotation.x = walkAngle * 0.3;
+
+            // At end of move, snap to exact position
+            if (executeCount.current === 0) {
+                current.copy(moveTarget.current);
+                current.y = 0;
+                moveStart.current = null;
+                moveTarget.current = null;
+
+                // Check for queued move
+                if (queuedMove.current) {
+                    moveStart.current = current.clone();
+                    moveTarget.current = queuedMove.current;
+                    queuedMove.current = null;
+                    executeCount.current = FRAMES_PER_MOVE;
+                }
+            }
+
+            // Reset head
             if (headRef.current) {
                 headRef.current.rotation.x *= 0.9;
                 headRef.current.rotation.z *= 0.9;
@@ -169,11 +171,7 @@ function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isT
             return;
         }
 
-        // IDLE STATE - Smooth interpolation & breathing
-        current.lerp(targetPosition.current, 0.05); // Smooth transition always
-        current.y = 0;
-
-        // Reset all limbs smoothly
+        // IDLE STATE - breathing animation
         if (leftLegRef.current) leftLegRef.current.rotation.x *= 0.92;
         if (rightLegRef.current) rightLegRef.current.rotation.x *= 0.92;
         if (leftArmRef.current) leftArmRef.current.rotation.x *= 0.92;
@@ -183,7 +181,6 @@ function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isT
             headRef.current.rotation.z *= 0.9;
         }
 
-        // Subtle breathing animation
         const breathe = Math.sin(state.clock.elapsedTime * 1.2) * 0.02;
         groupRef.current.scale.setScalar(AGENT_SCALE * (1 + breathe));
     });
@@ -603,7 +600,7 @@ function LunarRover({ position }) {
 }
 
 // Main Scene
-function Scene({ agents, activities, selectedLocation, setSelectedLocation, previousLocations }) {
+function Scene({ agents, activities, selectedLocation, setSelectedLocation, previousLocations, isPaused }) {
     const talkingAgents = useMemo(() => {
         const talking = new Set();
         activities.filter(a => a.action === 'talk' && a.details?.includes('Said to')).slice(0, 5).forEach(a => talking.add(a.agent));
@@ -651,7 +648,16 @@ function Scene({ agents, activities, selectedLocation, setSelectedLocation, prev
             <LunarRover position={[45, 0, 40]} />
 
             {agents.map(agent => (
-                <Astronaut key={agent.name} agent={agent} currentLocation={agent.location} previousLocation={previousLocations[agent.name]} speechBubble={speechBubbles[agent.name]} isTalking={talkingAgents.has(agent.name)} allAgents={agents} />
+                <Astronaut
+                    key={agent.name}
+                    agent={agent}
+                    currentLocation={agent.location}
+                    previousLocation={previousLocations[agent.name]}
+                    speechBubble={speechBubbles[agent.name]}
+                    isTalking={talkingAgents.has(agent.name)}
+                    allAgents={agents}
+                    isPaused={isPaused}
+                />
             ))}
 
             <OrbitControls makeDefault enablePan enableZoom enableRotate minDistance={30} maxDistance={180} maxPolarAngle={Math.PI / 2.1} target={[0, 0, 0]} />
@@ -659,8 +665,41 @@ function Scene({ agents, activities, selectedLocation, setSelectedLocation, prev
     );
 }
 
+// Agent Status Bar (Stanford-style)
+function AgentStatusBar({ agents, activities, onAgentClick }) {
+    const getEmoji = (agent) => {
+        const activity = activities.find(a => a.agent === agent.name);
+        if (!activity) return '😐';
+        switch (activity.action) {
+            case 'talk': return '💬';
+            case 'move': return '🚶';
+            case 'work': return '⚙️';
+            case 'rest': return '😴';
+            default: return '🤔';
+        }
+    };
+
+    return (
+        <div className="agent-status-bar">
+            {agents.map(agent => (
+                <div
+                    key={agent.name}
+                    className="agent-status-item"
+                    onClick={() => onAgentClick && onAgentClick(agent.name)}
+                    title={agent.name}
+                >
+                    <div className="agent-initials" style={{ background: getRoleColor(agent.role) }}>
+                        {agent.name.split(' ').map(n => n[0]).join('')}
+                    </div>
+                    <span className="agent-emoji">{getEmoji(agent)}</span>
+                </div>
+            ))}
+        </div>
+    );
+}
+
 // Main Component
-export default function LunarBase({ agents, activities, onAgentClick }) {
+export default function LunarBase({ agents, activities, onAgentClick, isPaused = false }) {
     const [selectedLocation, setSelectedLocation] = useState(null);
     const [previousLocations, setPreviousLocations] = useState({});
 
@@ -677,8 +716,20 @@ export default function LunarBase({ agents, activities, onAgentClick }) {
     return (
         <div className="lunar-base-container">
             <Canvas camera={{ position: [70, 55, 85], fov: 50 }} shadows style={{ background: '#000000' }}>
-                <Suspense fallback={null}><Scene agents={agents} activities={activities} selectedLocation={selectedLocation} setSelectedLocation={setSelectedLocation} previousLocations={previousLocations} /></Suspense>
+                <Suspense fallback={null}>
+                    <Scene
+                        agents={agents}
+                        activities={activities}
+                        selectedLocation={selectedLocation}
+                        setSelectedLocation={setSelectedLocation}
+                        previousLocations={previousLocations}
+                        isPaused={isPaused}
+                    />
+                </Suspense>
             </Canvas>
+
+            {/* Agent Status Bar (Stanford-style) */}
+            <AgentStatusBar agents={agents} activities={activities} onAgentClick={onAgentClick} />
 
             <div className="base-overlay">
                 <div className="controls-hint"><span>🖱️ Drag to rotate</span><span>🔍 Scroll to zoom</span><span>👆 Click location to see crew</span></div>

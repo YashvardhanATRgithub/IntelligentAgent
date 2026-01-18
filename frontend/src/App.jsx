@@ -216,6 +216,7 @@ function App() {
               agents={agents}
               activities={activities}
               onAgentClick={(agentName) => setSelectedAgent(agentName)}
+              isPaused={!isSimulationRunning}
             />
             {selectedAgent && (
               <AgentPanel
