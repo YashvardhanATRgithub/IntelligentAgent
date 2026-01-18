@@ -1,4 +1,4 @@
-import { useRef, useState, useMemo, useEffect, Suspense } from 'react';
+import { useRef, useState, useMemo, useEffect, Suspense, useCallback } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Text, Billboard, Html, Stars } from '@react-three/drei';
 import * as THREE from 'three';
@@ -195,7 +195,12 @@ function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isT
     };
 
     const roleColor = getRoleColor();
-    const initialPos = getBasePosition(currentLocation, agent.name);
+
+    // Initial position - only compute once on mount to prevent teleporting
+    const initialPos = useMemo(() => {
+        const pos = getBasePosition(currentLocation, agent.name);
+        return [pos.x, pos.y, pos.z];
+    }, []); // Empty deps - only set initial position on mount
 
     return (
         <group ref={groupRef} position={initialPos} scale={AGENT_SCALE}>
