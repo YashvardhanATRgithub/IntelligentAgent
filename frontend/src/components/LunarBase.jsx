@@ -283,7 +283,7 @@ function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isT
                     {agent.name.split(' ').pop()}
                 </Text>
                 <Text fontSize={0.22} color={roleColor} position={[0, -0.42, 0]} anchorX="center">
-                    {isMoving.current ? '🚶 Walking...' : (isTalking || speechBubble) ? '💬 Talking' : ''}
+                    {executeCount.current > 0 ? '🚶 Walking...' : (isTalking || speechBubble) ? '💬 Talking' : ''}
                 </Text>
             </Billboard>
 
