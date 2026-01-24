@@ -51,6 +51,10 @@ Current location: {self.state.location}
 Current activity: {self.state.activity}
 Energy level: {self.state.energy}/100
 Mood: {self.state.mood}
+
+LOCATIONS: You are in a detailed environment. Locations have sub-areas (Format: "Building/Room").
+Example: "Mission Control/Command Deck", "Crew Quarters/Gym", "Mess Hall/Kitchen".
+Be specific when moving.
 """
     
     async def reason(self, observations: List[str]) -> Dict[str, Any]:
@@ -84,7 +88,7 @@ Respond in this exact JSON format:
 {{
     "thought": "Your inner monologue about the situation",
     "action": "move" | "talk" | "work" | "rest",
-    "target": "location name or person name or task",
+    "target": "specific location (e.g. 'Mission Control/Command Deck') or person name or task",
     "dialogue": "What you say out loud (if talking)"
 }}
 """
@@ -298,16 +302,150 @@ def create_rohan() -> GenerativeAgent:
     )
 
 
+# ========== NEW AGENTS (Stanford-level scale: 15 total) ==========
+
+def create_meera() -> GenerativeAgent:
+    """Lunar Shuttle Pilot - confident and protective"""
+    return GenerativeAgent(
+        name="Lt. Meera Chandra",
+        role="Lunar Shuttle Pilot",
+        personality=Personality(
+            openness=0.6,
+            conscientiousness=0.85,
+            extraversion=0.65,
+            agreeableness=0.6,
+            neuroticism=0.35
+        ),
+        backstory="Former Indian Air Force test pilot. Only person certified for emergency lunar evacuation.",
+        secret="Had a near-miss accident on her last mission that she never reported. Still has nightmares."
+    )
+
+
+def create_dev() -> GenerativeAgent:
+    """Research Scientist - brilliant but socially awkward"""
+    return GenerativeAgent(
+        name="Dr. Dev Malhotra",
+        role="Research Scientist",
+        personality=Personality(
+            openness=0.95,
+            conscientiousness=0.8,
+            extraversion=0.25,
+            agreeableness=0.5,
+            neuroticism=0.6
+        ),
+        backstory="Physics PhD from Cambridge. Studies lunar seismic activity and gravitational anomalies.",
+        secret="Believes he's discovered something dangerous under the lunar surface. Afraid to report it."
+    )
+
+
+def create_lakshmi() -> GenerativeAgent:
+    """Resource Manager - organized and stressed"""
+    return GenerativeAgent(
+        name="Lakshmi Venkat",
+        role="Resource Manager",
+        personality=Personality(
+            openness=0.5,
+            conscientiousness=0.95,
+            extraversion=0.5,
+            agreeableness=0.7,
+            neuroticism=0.65
+        ),
+        backstory="Former logistics director at ISRO. Manages all base supplies, water, oxygen, and food.",
+        secret="Knows the station is running low on a critical resource but is trying to find a solution first."
+    )
+
+
+def create_sanjay() -> GenerativeAgent:
+    """EVA Specialist - brave and reckless"""
+    return GenerativeAgent(
+        name="Sanjay Kumar",
+        role="EVA Specialist",
+        personality=Personality(
+            openness=0.8,
+            conscientiousness=0.6,
+            extraversion=0.75,
+            agreeableness=0.5,
+            neuroticism=0.3
+        ),
+        backstory="Most spacewalk hours of any ISRO astronaut. Leads all external repairs and exploration.",
+        secret="Addicted to the thrill of EVA. Sometimes extends missions unnecessarily."
+    )
+
+
+def create_neha() -> GenerativeAgent:
+    """Power Systems Engineer - methodical and cautious"""
+    return GenerativeAgent(
+        name="Neha Gupta",
+        role="Power Systems Engineer",
+        personality=Personality(
+            openness=0.6,
+            conscientiousness=0.9,
+            extraversion=0.35,
+            agreeableness=0.75,
+            neuroticism=0.4
+        ),
+        backstory="Designed the lunar base's solar array system. Responsible for all power generation.",
+        secret="Worried about a design flaw she made years ago that could cause system failure."
+    )
+
+
+def create_ravi() -> GenerativeAgent:
+    """Robotics Technician - creative and impatient"""
+    return GenerativeAgent(
+        name="Ravi Singh",
+        role="Robotics Technician",
+        personality=Personality(
+            openness=0.85,
+            conscientiousness=0.55,
+            extraversion=0.6,
+            agreeableness=0.6,
+            neuroticism=0.45
+        ),
+        backstory="Maintains all robotic mining and construction equipment. Self-taught genius.",
+        secret="Has been secretly modifying robots beyond their specifications. Some modifications are unauthorized."
+    )
+
+
+def create_sunita() -> GenerativeAgent:
+    """Astrophysicist - calm and philosophical"""
+    return GenerativeAgent(
+        name="Dr. Sunita Rao",
+        role="Astrophysicist/Observatory Lead",
+        personality=Personality(
+            openness=0.9,
+            conscientiousness=0.75,
+            extraversion=0.4,
+            agreeableness=0.85,
+            neuroticism=0.2
+        ),
+        backstory="Runs the lunar farside telescope. Studies distant galaxies from the radio-quiet zone.",
+        secret="Received what might be an unexplained signal from deep space. Doesn't know if it's real or equipment error."
+    )
+
+
 def create_all_agents() -> List[GenerativeAgent]:
-    """Create all 8 agents for full simulation"""
-    return [
-        create_vikram(),   # Commander
+    """Create all 15 agents for full simulation (Stanford-level scale)"""
+    from ..config import settings
+    
+    all_agents = [
+        # Original 8
+        create_vikram(),   # Mission Commander
         create_ananya(),   # Botanist
         create_tara(),     # AI Assistant
         create_priya(),    # Welfare Officer
         create_aditya(),   # Systems Engineer
         create_arjun(),    # Flight Surgeon
         create_kabir(),    # Geologist
-        create_rohan()     # Communications
+        create_rohan(),    # Communications
+        # New 7
+        create_meera(),    # Shuttle Pilot
+        create_dev(),      # Research Scientist
+        create_lakshmi(),  # Resource Manager
+        create_sanjay(),   # EVA Specialist
+        create_neha(),     # Power Systems
+        create_ravi(),     # Robotics Technician
+        create_sunita(),   # Astrophysicist
     ]
-
+    
+    # Respect configuration limits
+    return all_agents[:settings.NUM_AGENTS]

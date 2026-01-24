@@ -121,6 +121,23 @@ function App() {
 
   useEffect(() => {
     loadAgents();
+
+    // Poll state every second for real-time time updates
+    const stateInterval = setInterval(async () => {
+      try {
+        const state = await api.getState();
+        if (state.time) {
+          setSimulationTime(state.time);
+        }
+        if (state.is_running !== undefined) {
+          setIsSimulationRunning(state.is_running);
+        }
+      } catch (e) {
+        // Ignore polling errors
+      }
+    }, 1000);
+
+    return () => clearInterval(stateInterval);
   }, []);
 
   const loadAgents = async () => {
@@ -218,6 +235,8 @@ function App() {
               onAgentClick={(agentName) => setSelectedAgent(agentName)}
               isPaused={!isSimulationRunning}
             />
+
+            {/* Agent Detail Panel */}
             {selectedAgent && (
               <AgentPanel
                 agentName={selectedAgent}

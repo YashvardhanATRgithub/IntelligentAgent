@@ -134,6 +134,17 @@ class RelationshipManager:
                 "last_interaction": rel.last_interaction.isoformat()
             }
         return result
+    
+    def get_relationship_scores(self, agent_name: str) -> Dict[str, float]:
+        """
+        Get relationship scores as a simple dict for attention prioritization.
+        Returns normalized scores (0-1 range) for use in perceive module.
+        """
+        scores = {}
+        for other, rel in self.get_all_relationships(agent_name).items():
+            # Normalize strength from 0-100 to 0-1
+            scores[other] = rel.strength / 100.0
+        return scores
 
 
 # Global relationship manager instance

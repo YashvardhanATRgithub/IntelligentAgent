@@ -220,6 +220,45 @@ async def reset_events():
     return {"status": "reset", "message": "All events and analytics cleared"}
 
 
+# ===== SAVE/LOAD STATE =====
+
+@app.post("/api/state/save")
+async def save_state(description: str = "Manual save"):
+    """Save current simulation state"""
+    from .simulation.state_manager import state_manager
+    snapshot_id = state_manager.create_snapshot(simulation, description)
+    return {"status": "saved", "snapshot_id": snapshot_id}
+
+
+@app.get("/api/state/snapshots")
+async def list_snapshots():
+    """List all available snapshots"""
+    from .simulation.state_manager import state_manager
+    return {"snapshots": state_manager.list_snapshots()}
+
+
+@app.post("/api/state/load/{snapshot_id}")
+async def load_state(snapshot_id: str):
+    """Load simulation from a snapshot"""
+    from .simulation.state_manager import state_manager
+    success = state_manager.restore_snapshot(simulation, snapshot_id)
+    if success:
+        return {"status": "loaded", "snapshot_id": snapshot_id}
+    return {"status": "error", "message": "Failed to load snapshot"}
+
+
+@app.post("/api/state/export")
+async def export_state():
+    """Export complete simulation data for analysis"""
+    from .simulation.state_manager import state_manager
+    import os
+    filepath = os.path.join("data", "exports", f"export_{int(__import__('time').time())}.json")
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    state_manager.export_for_analysis(simulation, filepath)
+    return {"status": "exported", "filepath": filepath}
+
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket for real-time simulation updates"""

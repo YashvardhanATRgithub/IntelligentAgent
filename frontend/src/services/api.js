@@ -7,6 +7,12 @@ export const api = {
         return response.json();
     },
 
+    // Get simulation state (for time updates)
+    getState: async () => {
+        const response = await fetch(`${API_BASE}/api/state`);
+        return response.json();
+    },
+
     // Start simulation
     startSimulation: async () => {
         const response = await fetch(`${API_BASE}/api/simulation/start`, {

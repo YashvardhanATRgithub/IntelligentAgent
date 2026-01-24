@@ -1,12 +1,18 @@
-import { useRef, useState, useMemo, useEffect, Suspense, useCallback } from 'react';
+import { useRef, useState, useMemo, useEffect, Suspense } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Text, Billboard, Html, Stars } from '@react-three/drei';
+import { OrbitControls, Text, Billboard, Stars } from '@react-three/drei';
 import * as THREE from 'three';
 import './LunarBase.css';
+import {
+    SciFiHabitat,
+    SciFiCommandCenter,
+    SciFiCommsTower,
+    SciFiMiningFacility
+} from './FuturisticBuildings';
 
-// Hub-spoke layout: Mission Control at center, 7 locations at equal angles
-// BIGGER SCALE for better visibility
-const SPOKE_DISTANCE = 40; // Increased from 25
+// Scattered layout: Mission Control at center, 7 locations spread FAR apart
+// MUCH BIGGER SCALE for realistic industrial feel  
+const SPOKE_DISTANCE = 150; // Buildings spread very far from center
 const NUM_SPOKES = 7;
 const ANGLE_STEP = (Math.PI * 2) / NUM_SPOKES;
 
@@ -56,7 +62,7 @@ function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isT
     const moveStart = useRef(null);
     const queuedMove = useRef(null); // Queue next move if one is in progress
 
-    const AGENT_SCALE = 1.8;
+    const AGENT_SCALE = 3.5;
 
     const getBasePosition = (locationName, agentName) => {
         const location = LOCATIONS.find(l => l.name === locationName);
@@ -204,276 +210,222 @@ function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isT
 
     return (
         <group ref={groupRef} position={initialPos} scale={AGENT_SCALE}>
-            {/* Head/Helmet - BIGGER */}
-            <group ref={headRef} position={[0, 1.9, 0]}>
+            {/* ============ HELMET - Round with gold visor ============ */}
+            <group ref={headRef} position={[0, 2.1, 0]}>
+                {/* Helmet shell - white */}
                 <mesh>
-                    <sphereGeometry args={[0.35, 16, 16]} />
-                    <meshStandardMaterial color="#FFFFFF" metalness={0.3} roughness={0.4} />
+                    <sphereGeometry args={[0.42, 24, 24]} />
+                    <meshStandardMaterial color="#F5F5F5" metalness={0.15} roughness={0.4} />
                 </mesh>
-                <mesh position={[0, 0, 0.25]}>
-                    <sphereGeometry args={[0.26, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
-                    <meshStandardMaterial color="#1a1a2e" metalness={0.9} roughness={0.1} />
+                {/* Gold reflective visor */}
+                <mesh position={[0, 0, 0.2]} rotation={[0.1, 0, 0]}>
+                    <sphereGeometry args={[0.38, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
+                    <meshStandardMaterial
+                        color="#FFD700"
+                        metalness={0.95}
+                        roughness={0.05}
+                        emissive="#805000"
+                        emissiveIntensity={0.15}
+                    />
                 </mesh>
-                <mesh position={[0.26, 0.2, 0.15]}>
-                    <boxGeometry args={[0.12, 0.06, 0.06]} />
+                {/* Helmet rim */}
+                <mesh position={[0, -0.15, 0]} rotation={[Math.PI / 2, 0, 0]}>
+                    <torusGeometry args={[0.35, 0.06, 8, 24]} />
+                    <meshStandardMaterial color="#CCCCCC" metalness={0.5} roughness={0.3} />
+                </mesh>
+                {/* Comm light - blinks when talking */}
+                <mesh position={[0.38, 0.15, 0.15]}>
+                    <boxGeometry args={[0.08, 0.04, 0.04]} />
                     <meshBasicMaterial color={isTalking || speechBubble ? '#00FF00' : '#333333'} />
                 </mesh>
+                {/* Helmet camera */}
+                <mesh position={[-0.35, 0.2, 0.2]}>
+                    <boxGeometry args={[0.08, 0.06, 0.1]} />
+                    <meshStandardMaterial color="#222222" metalness={0.8} roughness={0.2} />
+                </mesh>
             </group>
 
-            {/* Body - BIGGER */}
-            <mesh position={[0, 1.2, 0]}>
-                <capsuleGeometry args={[0.38, 0.7, 8, 16]} />
-                <meshStandardMaterial color="#EEEEEE" metalness={0.1} roughness={0.6} />
+            {/* ============ TORSO - Bulky spacesuit ============ */}
+            <group position={[0, 1.3, 0]}>
+                {/* Main torso */}
+                <mesh>
+                    <capsuleGeometry args={[0.42, 0.65, 8, 16]} />
+                    <meshStandardMaterial color="#F0F0F0" metalness={0.1} roughness={0.5} />
+                </mesh>
+                {/* Chest plate with controls */}
+                <mesh position={[0, 0.15, 0.38]}>
+                    <boxGeometry args={[0.5, 0.4, 0.12]} />
+                    <meshStandardMaterial color="#E0E0E0" metalness={0.3} roughness={0.4} />
+                </mesh>
+                {/* Chest display */}
+                <mesh position={[0, 0.18, 0.45]}>
+                    <planeGeometry args={[0.35, 0.22]} />
+                    <meshStandardMaterial color="#1a1a2e" emissive={roleColor} emissiveIntensity={0.3} />
+                </mesh>
+                {/* Role color stripe on chest */}
+                <mesh position={[0, -0.05, 0.44]}>
+                    <boxGeometry args={[0.4, 0.08, 0.02]} />
+                    <meshBasicMaterial color={roleColor} />
+                </mesh>
+                {/* Shoulder joints */}
+                <mesh position={[-0.48, 0.25, 0]}>
+                    <sphereGeometry args={[0.12, 16, 16]} />
+                    <meshStandardMaterial color="#CCCCCC" metalness={0.4} roughness={0.4} />
+                </mesh>
+                <mesh position={[0.48, 0.25, 0]}>
+                    <sphereGeometry args={[0.12, 16, 16]} />
+                    <meshStandardMaterial color="#CCCCCC" metalness={0.4} roughness={0.4} />
+                </mesh>
+            </group>
+
+            {/* ============ LIFE SUPPORT BACKPACK ============ */}
+            <group position={[0, 1.4, -0.48]}>
+                {/* Main pack */}
+                <mesh>
+                    <boxGeometry args={[0.6, 0.8, 0.4]} />
+                    <meshStandardMaterial color="#E8E8E8" metalness={0.2} roughness={0.5} />
+                </mesh>
+                {/* Oxygen tanks */}
+                <mesh position={[-0.18, 0, -0.15]} rotation={[0, 0, 0]}>
+                    <cylinderGeometry args={[0.08, 0.08, 0.65, 12]} />
+                    <meshStandardMaterial color="#FFFFFF" metalness={0.5} roughness={0.3} />
+                </mesh>
+                <mesh position={[0.18, 0, -0.15]} rotation={[0, 0, 0]}>
+                    <cylinderGeometry args={[0.08, 0.08, 0.65, 12]} />
+                    <meshStandardMaterial color="#FFFFFF" metalness={0.5} roughness={0.3} />
+                </mesh>
+                {/* Status light */}
+                <mesh position={[0, 0.35, 0.21]}>
+                    <sphereGeometry args={[0.04]} />
+                    <meshBasicMaterial color="#00FF00" />
+                </mesh>
+                {/* Vents */}
+                <mesh position={[0, -0.3, 0.21]}>
+                    <boxGeometry args={[0.3, 0.12, 0.02]} />
+                    <meshStandardMaterial color="#555555" metalness={0.7} roughness={0.3} />
+                </mesh>
+            </group>
+
+            {/* ============ LEFT ARM ============ */}
+            <group ref={leftArmRef} position={[-0.58, 1.55, 0]}>
+                {/* Upper arm */}
+                <mesh position={[0, -0.22, 0]}>
+                    <capsuleGeometry args={[0.13, 0.35, 6, 12]} />
+                    <meshStandardMaterial color="#F0F0F0" metalness={0.1} roughness={0.5} />
+                </mesh>
+                {/* Elbow joint */}
+                <mesh position={[0, -0.45, 0]}>
+                    <sphereGeometry args={[0.1, 12, 12]} />
+                    <meshStandardMaterial color="#CCCCCC" metalness={0.4} roughness={0.4} />
+                </mesh>
+                {/* Lower arm */}
+                <mesh position={[0, -0.65, 0]}>
+                    <capsuleGeometry args={[0.11, 0.3, 6, 12]} />
+                    <meshStandardMaterial color="#F0F0F0" metalness={0.1} roughness={0.5} />
+                </mesh>
+                {/* Glove */}
+                <mesh position={[0, -0.88, 0]}>
+                    <sphereGeometry args={[0.12, 12, 12]} />
+                    <meshStandardMaterial color="#D0D0D0" metalness={0.2} roughness={0.6} />
+                </mesh>
+            </group>
+
+            {/* ============ RIGHT ARM ============ */}
+            <group ref={rightArmRef} position={[0.58, 1.55, 0]}>
+                {/* Upper arm */}
+                <mesh position={[0, -0.22, 0]}>
+                    <capsuleGeometry args={[0.13, 0.35, 6, 12]} />
+                    <meshStandardMaterial color="#F0F0F0" metalness={0.1} roughness={0.5} />
+                </mesh>
+                {/* Elbow joint */}
+                <mesh position={[0, -0.45, 0]}>
+                    <sphereGeometry args={[0.1, 12, 12]} />
+                    <meshStandardMaterial color="#CCCCCC" metalness={0.4} roughness={0.4} />
+                </mesh>
+                {/* Lower arm */}
+                <mesh position={[0, -0.65, 0]}>
+                    <capsuleGeometry args={[0.11, 0.3, 6, 12]} />
+                    <meshStandardMaterial color="#F0F0F0" metalness={0.1} roughness={0.5} />
+                </mesh>
+                {/* Glove */}
+                <mesh position={[0, -0.88, 0]}>
+                    <sphereGeometry args={[0.12, 12, 12]} />
+                    <meshStandardMaterial color="#D0D0D0" metalness={0.2} roughness={0.6} />
+                </mesh>
+            </group>
+
+            {/* ============ LEFT LEG ============ */}
+            <group ref={leftLegRef} position={[-0.22, 0.7, 0]}>
+                {/* Upper leg */}
+                <mesh position={[0, -0.28, 0]}>
+                    <capsuleGeometry args={[0.15, 0.45, 6, 12]} />
+                    <meshStandardMaterial color="#F0F0F0" metalness={0.1} roughness={0.5} />
+                </mesh>
+                {/* Knee joint */}
+                <mesh position={[0, -0.55, 0]}>
+                    <sphereGeometry args={[0.12, 12, 12]} />
+                    <meshStandardMaterial color="#CCCCCC" metalness={0.4} roughness={0.4} />
+                </mesh>
+                {/* Lower leg */}
+                <mesh position={[0, -0.78, 0]}>
+                    <capsuleGeometry args={[0.13, 0.35, 6, 12]} />
+                    <meshStandardMaterial color="#F0F0F0" metalness={0.1} roughness={0.5} />
+                </mesh>
+                {/* Boot */}
+                <mesh position={[0, -1.05, 0.08]}>
+                    <boxGeometry args={[0.22, 0.18, 0.35]} />
+                    <meshStandardMaterial color="#4a4a4a" metalness={0.3} roughness={0.6} />
+                </mesh>
+            </group>
+
+            {/* ============ RIGHT LEG ============ */}
+            <group ref={rightLegRef} position={[0.22, 0.7, 0]}>
+                {/* Upper leg */}
+                <mesh position={[0, -0.28, 0]}>
+                    <capsuleGeometry args={[0.15, 0.45, 6, 12]} />
+                    <meshStandardMaterial color="#F0F0F0" metalness={0.1} roughness={0.5} />
+                </mesh>
+                {/* Knee joint */}
+                <mesh position={[0, -0.55, 0]}>
+                    <sphereGeometry args={[0.12, 12, 12]} />
+                    <meshStandardMaterial color="#CCCCCC" metalness={0.4} roughness={0.4} />
+                </mesh>
+                {/* Lower leg */}
+                <mesh position={[0, -0.78, 0]}>
+                    <capsuleGeometry args={[0.13, 0.35, 6, 12]} />
+                    <meshStandardMaterial color="#F0F0F0" metalness={0.1} roughness={0.5} />
+                </mesh>
+                {/* Boot */}
+                <mesh position={[0, -1.05, 0.08]}>
+                    <boxGeometry args={[0.22, 0.18, 0.35]} />
+                    <meshStandardMaterial color="#4a4a4a" metalness={0.3} roughness={0.6} />
+                </mesh>
+            </group>
+
+            {/* Role color stripes on arms */}
+            <mesh position={[-0.58, 1.35, 0.12]} rotation={[0, 0, 0]}>
+                <boxGeometry args={[0.22, 0.06, 0.02]} />
+                <meshBasicMaterial color={roleColor} />
             </mesh>
-
-            {/* Backpack */}
-            <mesh position={[0, 1.3, -0.45]}>
-                <boxGeometry args={[0.55, 0.7, 0.38]} />
-                <meshStandardMaterial color="#CCCCCC" metalness={0.2} roughness={0.5} />
-            </mesh>
-
-            {/* Arms - BIGGER */}
-            <group ref={leftArmRef} position={[-0.55, 1.45, 0]}>
-                <mesh position={[0, -0.32, 0]}>
-                    <capsuleGeometry args={[0.12, 0.58, 4, 8]} />
-                    <meshStandardMaterial color="#EEEEEE" />
-                </mesh>
-                <mesh position={[0, -0.7, 0]}>
-                    <sphereGeometry args={[0.14, 8, 8]} />
-                    <meshStandardMaterial color="#CCCCCC" />
-                </mesh>
-            </group>
-            <group ref={rightArmRef} position={[0.55, 1.45, 0]}>
-                <mesh position={[0, -0.32, 0]}>
-                    <capsuleGeometry args={[0.12, 0.58, 4, 8]} />
-                    <meshStandardMaterial color="#EEEEEE" />
-                </mesh>
-                <mesh position={[0, -0.7, 0]}>
-                    <sphereGeometry args={[0.14, 8, 8]} />
-                    <meshStandardMaterial color="#CCCCCC" />
-                </mesh>
-            </group>
-
-            {/* Legs - BIGGER */}
-            <group ref={leftLegRef} position={[-0.2, 0.6, 0]}>
-                <mesh position={[0, -0.38, 0]}>
-                    <capsuleGeometry args={[0.15, 0.7, 4, 8]} />
-                    <meshStandardMaterial color="#EEEEEE" />
-                </mesh>
-                <mesh position={[0, -0.85, 0.08]}>
-                    <boxGeometry args={[0.22, 0.22, 0.32]} />
-                    <meshStandardMaterial color="#666666" />
-                </mesh>
-            </group>
-            <group ref={rightLegRef} position={[0.2, 0.6, 0]}>
-                <mesh position={[0, -0.38, 0]}>
-                    <capsuleGeometry args={[0.15, 0.7, 4, 8]} />
-                    <meshStandardMaterial color="#EEEEEE" />
-                </mesh>
-                <mesh position={[0, -0.85, 0.08]}>
-                    <boxGeometry args={[0.22, 0.22, 0.32]} />
-                    <meshStandardMaterial color="#666666" />
-                </mesh>
-            </group>
-
-            {/* Role badge */}
-            <mesh position={[0, 1.5, 0.39]}>
-                <circleGeometry args={[0.16, 16]} />
+            <mesh position={[0.58, 1.35, 0.12]} rotation={[0, 0, 0]}>
+                <boxGeometry args={[0.22, 0.06, 0.02]} />
                 <meshBasicMaterial color={roleColor} />
             </mesh>
 
-            {/* Name tag - BIGGER text */}
-            <Billboard position={[0, 2.8, 0]}>
-                <Text fontSize={0.35} color="white" anchorX="center" outlineWidth={0.025} outlineColor="#000">
+            {/* ============ NAME TAG ============ */}
+            <Billboard position={[0, 3.0, 0]}>
+                <Text fontSize={0.35} color="white" anchorX="center" outlineWidth={0.03} outlineColor="#000" fontWeight="bold">
                     {agent.name.split(' ').pop()}
                 </Text>
-                <Text fontSize={0.22} color={roleColor} position={[0, -0.42, 0]} anchorX="center">
-                    {executeCount.current > 0 ? '🚶 Walking...' : (isTalking || speechBubble) ? '💬 Talking' : ''}
+                <Text fontSize={0.18} color={roleColor} position={[0, -0.4, 0]} anchorX="center">
+                    {agent.role}
+                </Text>
+                <Text fontSize={0.16} color="#88FF88" position={[0, -0.6, 0]} anchorX="center">
+                    {executeCount.current > 0 ? '🚀 Moving...' : (isTalking || speechBubble) ? '💬 Talking' : ''}
                 </Text>
             </Billboard>
 
-            {/* Speech bubble - Shows thought and dialogue */}
-            {speechBubble && (
-                <Html position={[3, 2.5, 0]} center className="speech-bubble-3d" distanceFactor={25}>
-                    <div className="bubble-content side-bubble">
-                        <span className="bubble-arrow">◀</span>
-                        {speechBubble.thought && (
-                            <div className="bubble-thought">💭 {speechBubble.thought}</div>
-                        )}
-                        <div className="bubble-dialogue">"{speechBubble.dialogue}"</div>
-                    </div>
-                </Html>
-            )}
-        </group>
-    );
-}
 
-// BIGGER Transparent Cylindrical Module
-function CylinderModule({ location, agentCount, isSelected, onClick }) {
-    const [hovered, setHovered] = useState(false);
-    const SCALE = 1.5; // Bigger scale
-
-    return (
-        <group position={location.position} scale={SCALE}>
-            <mesh onClick={onClick} onPointerOver={() => setHovered(true)} onPointerOut={() => setHovered(false)} rotation={[0, 0, Math.PI / 2]}>
-                <cylinderGeometry args={[2.5, 2.5, 8, 32]} />
-                <meshStandardMaterial color={location.color} metalness={0.2} roughness={0.3} transparent opacity={0.3} emissive={isSelected ? location.color : hovered ? '#555' : '#000'} emissiveIntensity={isSelected ? 0.4 : hovered ? 0.2 : 0} />
-            </mesh>
-            <mesh rotation={[0, 0, Math.PI / 2]}>
-                <cylinderGeometry args={[2.55, 2.55, 8.05, 16]} />
-                <meshBasicMaterial color={location.color} wireframe />
-            </mesh>
-            {[-4.2, 4.2].map((x, i) => (
-                <mesh key={i} position={[x, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
-                    <cylinderGeometry args={[2.5, 2.2, 0.5, 32]} />
-                    <meshStandardMaterial color="#AAAAAA" metalness={0.5} transparent opacity={0.5} />
-                </mesh>
-            ))}
-            {[-2.8, 2.8].map((x, i) => (
-                <mesh key={i} position={[x, -2, 0]}>
-                    <cylinderGeometry args={[0.25, 0.35, 2]} />
-                    <meshStandardMaterial color="#888888" metalness={0.6} />
-                </mesh>
-            ))}
-            <Billboard position={[0, 4.5, 0]}>
-                <Text fontSize={0.8} color={location.color} anchorX="center" outlineWidth={0.04} outlineColor="#000" fontWeight="bold">
-                    {location.name}
-                </Text>
-                {agentCount > 0 && (
-                    <Text fontSize={0.5} color="white" position={[0, -0.9, 0]} anchorX="center">
-                        {agentCount} crew
-                    </Text>
-                )}
-            </Billboard>
-        </group>
-    );
-}
-
-// BIGGER Transparent Dome (Mission Control)
-function DomeModule({ location, agentCount, isSelected, onClick }) {
-    const [hovered, setHovered] = useState(false);
-    const SCALE = 1.6;
-
-    return (
-        <group position={location.position} scale={SCALE}>
-            <mesh onClick={onClick} onPointerOver={() => setHovered(true)} onPointerOut={() => setHovered(false)}>
-                <sphereGeometry args={[5, 32, 32, 0, Math.PI * 2, 0, Math.PI / 2]} />
-                <meshStandardMaterial color={location.color} metalness={0.2} roughness={0.3} transparent opacity={0.3} emissive={isSelected ? location.color : hovered ? '#555' : '#000'} emissiveIntensity={isSelected ? 0.5 : hovered ? 0.2 : 0} />
-            </mesh>
-            <mesh>
-                <sphereGeometry args={[5.1, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
-                <meshBasicMaterial color={location.color} wireframe />
-            </mesh>
-            <mesh rotation={[Math.PI / 2, 0, 0]}>
-                <torusGeometry args={[5, 0.5, 8, 32]} />
-                <meshStandardMaterial color="#AAAAAA" metalness={0.5} />
-            </mesh>
-            <mesh position={[0, 5.5, 0]}>
-                <cylinderGeometry args={[0.12, 0.12, 2.5]} />
-                <meshStandardMaterial color="#888888" />
-            </mesh>
-            <mesh position={[0, 7, 0]}>
-                <sphereGeometry args={[0.25, 8, 8]} />
-                <meshBasicMaterial color="#FF0000" />
-            </mesh>
-            <Billboard position={[0, 9, 0]}>
-                <Text fontSize={1} color="#FF6B35" anchorX="center" outlineWidth={0.05} outlineColor="#000" fontWeight="bold">
-                    MISSION CONTROL
-                </Text>
-                {agentCount > 0 && (
-                    <Text fontSize={0.6} color="white" position={[0, -1.2, 0]} anchorX="center">{agentCount} crew</Text>
-                )}
-            </Billboard>
-        </group>
-    );
-}
-
-// BIGGER Comms Tower
-function CommsDish({ location, agentCount, isSelected, onClick }) {
-    const dishRef = useRef();
-    const [hovered, setHovered] = useState(false);
-    const SCALE = 1.5;
-
-    useFrame((state) => {
-        if (dishRef.current) dishRef.current.rotation.y = Math.sin(state.clock.elapsedTime * 0.12) * 0.5;
-    });
-
-    return (
-        <group position={location.position} scale={SCALE}>
-            <mesh onClick={onClick} onPointerOver={() => setHovered(true)} onPointerOut={() => setHovered(false)}>
-                <cylinderGeometry args={[4, 4, 1.2, 32]} />
-                <meshStandardMaterial color={location.color} transparent opacity={0.3} emissive={isSelected || hovered ? location.color : '#000'} emissiveIntensity={0.3} />
-            </mesh>
-            <mesh><cylinderGeometry args={[4.05, 4.05, 1.25, 16]} /><meshBasicMaterial color={location.color} wireframe /></mesh>
-            <mesh position={[0, 5, 0]}><cylinderGeometry args={[0.5, 0.6, 10]} /><meshStandardMaterial color="#888888" metalness={0.6} /></mesh>
-            <group ref={dishRef} position={[0, 10, 0]}>
-                <mesh rotation={[Math.PI / 4, 0, 0]}><sphereGeometry args={[3, 32, 32, 0, Math.PI * 2, 0, Math.PI / 2]} /><meshStandardMaterial color="#EEEEEE" metalness={0.8} roughness={0.2} side={THREE.DoubleSide} /></mesh>
-                <mesh position={[0, 1.2, -2.4]} rotation={[Math.PI / 4, 0, 0]}><cylinderGeometry args={[0.25, 0.3, 1.2]} /><meshStandardMaterial color="#666666" /></mesh>
-            </group>
-            <Billboard position={[0, 14, 0]}><Text fontSize={0.8} color={location.color} anchorX="center" outlineWidth={0.04} outlineColor="#000">Comms Tower</Text></Billboard>
-        </group>
-    );
-}
-
-// BIGGER Mining Tunnel
-function MiningTunnel({ location, agentCount, isSelected, onClick }) {
-    const [hovered, setHovered] = useState(false);
-    const SCALE = 1.5;
-
-    return (
-        <group position={location.position} scale={SCALE}>
-            <mesh rotation={[Math.PI / 2, 0, Math.PI / 4]} onClick={onClick} onPointerOver={() => setHovered(true)} onPointerOut={() => setHovered(false)}>
-                <cylinderGeometry args={[3, 3, 10, 16, 1, true]} />
-                <meshStandardMaterial color={location.color} transparent opacity={0.3} side={THREE.DoubleSide} emissive={isSelected || hovered ? location.color : '#000'} emissiveIntensity={0.3} />
-            </mesh>
-            <mesh rotation={[Math.PI / 2, 0, Math.PI / 4]}><cylinderGeometry args={[3.1, 3.1, 10.1, 12, 1, true]} /><meshBasicMaterial color={location.color} wireframe /></mesh>
-            <mesh position={[0, 1.2, 0]} rotation={[0, Math.PI / 4, 0]}><boxGeometry args={[7, 6, 0.6]} /><meshStandardMaterial color="#FF6B35" metalness={0.5} /></mesh>
-            {[-0.6, 0.6].map((offset, i) => (
-                <mesh key={i} position={[4 + offset, -0.5, 4 + offset]} rotation={[0, Math.PI / 4, 0]}><boxGeometry args={[0.22, 0.22, 18]} /><meshStandardMaterial color="#444444" metalness={0.7} /></mesh>
-            ))}
-            <Billboard position={[0, 6, 0]}><Text fontSize={0.8} color={location.color} anchorX="center" outlineWidth={0.04} outlineColor="#000">Mining Tunnel</Text></Billboard>
-        </group>
-    );
-}
-
-// BIGGER Spoke paths
-function SpokePaths() {
-    return (
-        <group>
-            {LOCATIONS.slice(1).map((location, i) => {
-                const center = [0, 0.2, 0];
-                const end = [...location.position]; end[1] = 0.2;
-                const startVec = new THREE.Vector3(...center);
-                const endVec = new THREE.Vector3(...end);
-                const length = startVec.distanceTo(endVec);
-                const midpoint = startVec.clone().add(endVec).multiplyScalar(0.5);
-                const angle = Math.atan2(endVec.x - startVec.x, endVec.z - startVec.z);
-
-                return (
-                    <group key={location.name}>
-                        <mesh position={[midpoint.x, 0.15, midpoint.z]} rotation={[0, angle, 0]}>
-                            <boxGeometry args={[2.2, 0.2, length]} />
-                            <meshStandardMaterial color="#555555" metalness={0.3} roughness={0.7} />
-                        </mesh>
-                        {[-0.9, 0.9].map((offset, j) => (
-                            <mesh key={j} position={[midpoint.x + Math.cos(angle + Math.PI / 2) * offset, 0.3, midpoint.z + Math.sin(angle + Math.PI / 2) * offset]} rotation={[0, angle, 0]}>
-                                <boxGeometry args={[0.15, 0.2, length]} />
-                                <meshStandardMaterial color={location.color} metalness={0.4} />
-                            </mesh>
-                        ))}
-                        {Array.from({ length: Math.floor(length / 6) }).map((_, k) => {
-                            const t = (k + 1) / (Math.floor(length / 6) + 1);
-                            const markerPos = startVec.clone().lerp(endVec, t);
-                            return (
-                                <mesh key={k} position={[markerPos.x, 0.35, markerPos.z]} rotation={[-Math.PI / 2, 0, angle]}>
-                                    <coneGeometry args={[0.4, 0.8, 4]} />
-                                    <meshBasicMaterial color={location.color} transparent opacity={0.8} />
-                                </mesh>
-                            );
-                        })}
-                    </group>
-                );
-            })}
         </group>
     );
 }
@@ -565,15 +517,81 @@ function LunarSurface() {
     );
 }
 
-// Earth - BIGGER
+// Earth - Realistic with visible blue ocean and green/brown continents
 function Earth() {
     const earthRef = useRef();
-    useFrame(() => { if (earthRef.current) earthRef.current.rotation.y += 0.00015; });
+
+    useFrame(() => {
+        if (earthRef.current) earthRef.current.rotation.y += 0.0003;
+    });
+
     return (
-        <mesh ref={earthRef} position={[-100, 65, -150]}>
-            <sphereGeometry args={[20, 32, 32]} />
-            <meshStandardMaterial color="#4169E1" emissive="#4169E1" emissiveIntensity={0.4} />
-        </mesh>
+        <group ref={earthRef} position={[-180, 120, -250]}>
+            {/* Main Earth sphere - PURE BLUE OCEAN */}
+            <mesh>
+                <sphereGeometry args={[35, 64, 64]} />
+                <meshStandardMaterial color="#1565C0" metalness={0.3} roughness={0.6} />
+            </mesh>
+
+            {/* CONTINENTS - Green/brown landmasses as separate patches */}
+            {/* North America */}
+            <mesh position={[20, 18, 22]} rotation={[0.2, 0.5, 0.1]}>
+                <sphereGeometry args={[12, 32, 32, 0, Math.PI, 0, Math.PI / 2]} />
+                <meshStandardMaterial color="#228B22" metalness={0} roughness={0.9} />
+            </mesh>
+
+            {/* South America */}
+            <mesh position={[18, -8, 25]} rotation={[-0.3, 0.3, 0]}>
+                <sphereGeometry args={[8, 32, 32, 0, Math.PI * 0.7, 0, Math.PI / 2]} />
+                <meshStandardMaterial color="#2E8B57" metalness={0} roughness={0.9} />
+            </mesh>
+
+            {/* Europe/Africa */}
+            <mesh position={[-5, 10, 32]} rotation={[0.1, -0.2, 0]}>
+                <sphereGeometry args={[10, 32, 32, 0, Math.PI * 0.8, 0, Math.PI / 2]} />
+                <meshStandardMaterial color="#228B22" metalness={0} roughness={0.9} />
+            </mesh>
+
+            {/* Africa */}
+            <mesh position={[-2, -5, 33]} rotation={[-0.2, 0, 0.1]}>
+                <sphereGeometry args={[11, 32, 32, 0, Math.PI * 0.9, 0, Math.PI / 2]} />
+                <meshStandardMaterial color="#8B4513" metalness={0} roughness={0.85} />
+            </mesh>
+
+            {/* Asia */}
+            <mesh position={[-25, 15, 18]} rotation={[0.3, -0.8, 0.2]}>
+                <sphereGeometry args={[14, 32, 32, 0, Math.PI, 0, Math.PI / 2]} />
+                <meshStandardMaterial color="#228B22" metalness={0} roughness={0.9} />
+            </mesh>
+
+            {/* Australia */}
+            <mesh position={[-28, -15, 12]} rotation={[-0.5, -1, 0]}>
+                <sphereGeometry args={[6, 32, 32, 0, Math.PI * 0.8, 0, Math.PI / 2]} />
+                <meshStandardMaterial color="#D2691E" metalness={0} roughness={0.85} />
+            </mesh>
+
+            {/* White polar ice caps */}
+            <mesh position={[0, 33, 0]}>
+                <sphereGeometry args={[10, 32, 16, 0, Math.PI * 2, 0, Math.PI / 4]} />
+                <meshStandardMaterial color="#FFFFFF" metalness={0.1} roughness={0.3} />
+            </mesh>
+            <mesh position={[0, -33, 0]} rotation={[Math.PI, 0, 0]}>
+                <sphereGeometry args={[12, 32, 16, 0, Math.PI * 2, 0, Math.PI / 4]} />
+                <meshStandardMaterial color="#FFFFFF" metalness={0.1} roughness={0.3} />
+            </mesh>
+
+            {/* Thin clouds layer */}
+            <mesh>
+                <sphereGeometry args={[36, 32, 32]} />
+                <meshStandardMaterial color="#FFFFFF" transparent opacity={0.15} metalness={0} roughness={1} />
+            </mesh>
+
+            {/* Atmosphere glow */}
+            <mesh>
+                <sphereGeometry args={[38, 32, 32]} />
+                <meshBasicMaterial color="#4FC3F7" transparent opacity={0.12} side={THREE.BackSide} />
+            </mesh>
+        </group>
     );
 }
 
@@ -605,7 +623,7 @@ function LunarRover({ position }) {
 }
 
 // Main Scene
-function Scene({ agents, activities, selectedLocation, setSelectedLocation, previousLocations, isPaused }) {
+function Scene({ agents, activities, selectedLocation, setSelectedLocation, previousLocations, isPaused, onAgentClick }) {
     const talkingAgents = useMemo(() => {
         const talking = new Set();
         activities.filter(a => a.action === 'talk' && a.details?.includes('Said to')).slice(0, 5).forEach(a => talking.add(a.agent));
@@ -637,16 +655,16 @@ function Scene({ agents, activities, selectedLocation, setSelectedLocation, prev
             <Stars radius={400} depth={250} count={12000} factor={12} saturation={0} fade speed={0.15} />
             <Earth />
             <LunarSurface />
-            <SpokePaths />
 
+            {/* Sci-Fi Buildings */}
             {LOCATIONS.map((loc) => {
                 const count = getAgentsAtLocation(loc.name).length;
                 const props = { location: loc, agentCount: count, isSelected: selectedLocation === loc.name, onClick: () => setSelectedLocation(selectedLocation === loc.name ? null : loc.name) };
-                switch (loc.type) {
-                    case 'dome': return <DomeModule key={loc.name} {...props} />;
-                    case 'dish': return <CommsDish key={loc.name} {...props} />;
-                    case 'tunnel': return <MiningTunnel key={loc.name} {...props} />;
-                    default: return <CylinderModule key={loc.name} {...props} />;
+                switch (loc.name) {
+                    case 'Mission Control': return <SciFiCommandCenter key={loc.name} {...props} />;
+                    case 'Comms Tower': return <SciFiCommsTower key={loc.name} {...props} />;
+                    case 'Mining Tunnel': return <SciFiMiningFacility key={loc.name} {...props} />;
+                    default: return <SciFiHabitat key={loc.name} {...props} />;
                 }
             })}
 
@@ -665,7 +683,7 @@ function Scene({ agents, activities, selectedLocation, setSelectedLocation, prev
                 />
             ))}
 
-            <OrbitControls makeDefault enablePan enableZoom enableRotate minDistance={30} maxDistance={180} maxPolarAngle={Math.PI / 2.1} target={[0, 0, 0]} />
+            <OrbitControls makeDefault enablePan enableZoom enableRotate minDistance={80} maxDistance={600} maxPolarAngle={Math.PI / 2.1} target={[0, 50, 0]} />
         </>
     );
 }
@@ -705,6 +723,7 @@ function AgentStatusBar({ agents, activities, onAgentClick }) {
 
 // Main Component
 export default function LunarBase({ agents, activities, onAgentClick, isPaused = false }) {
+    // Local state for location selection (restored from old implementation)
     const [selectedLocation, setSelectedLocation] = useState(null);
     const [previousLocations, setPreviousLocations] = useState({});
 
@@ -720,7 +739,7 @@ export default function LunarBase({ agents, activities, onAgentClick, isPaused =
 
     return (
         <div className="lunar-base-container">
-            <Canvas camera={{ position: [70, 55, 85], fov: 50 }} shadows style={{ background: '#000000' }}>
+            <Canvas camera={{ position: [200, 180, 250], fov: 50 }} shadows style={{ background: '#000000' }}>
                 <Suspense fallback={null}>
                     <Scene
                         agents={agents}
@@ -740,6 +759,7 @@ export default function LunarBase({ agents, activities, onAgentClick, isPaused =
                 <div className="controls-hint"><span>🖱️ Drag to rotate</span><span>🔍 Scroll to zoom</span><span>👆 Click location to see crew</span></div>
             </div>
 
+            {/* Inline location panel - shows agents at selected location */}
             {selectedLocation && (
                 <div className="location-info-panel">
                     <button className="close-btn" onClick={() => setSelectedLocation(null)}>✕</button>
