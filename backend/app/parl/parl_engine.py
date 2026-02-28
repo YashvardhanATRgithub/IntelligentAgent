@@ -1,6 +1,6 @@
 """
 PARL Engine - Orchestrates the Perception, Action, Reasoning, Learning loop
-Uses Groq API for LLM reasoning
+Supports Groq, Cerebras, and Ollama for LLM reasoning
 """
 import httpx
 import json
@@ -87,7 +87,7 @@ class PARLEngine:
     """
     PARL (Perception, Action, Reasoning, Learning) Engine
     Provides LLM-powered decision making for agents.
-    Supports dual providers: Groq (cloud) and Ollama (local).
+    Supports three providers: Groq (cloud), Cerebras (cloud, fast), and Ollama (local).
     """
     
     def __init__(self):
@@ -100,10 +100,23 @@ class PARLEngine:
             print(f"🦙 PARL Engine initialized with Ollama ({self.ollama_model})")
             print(f"   Host: {self.ollama_host}")
             print(f"   ⚡ NO RATE LIMITS - Unlimited local inference!")
-            # No rate limiter needed for local
             self.rate_limiter = None
+        
+        elif self.llm_provider == "cerebras":
+            if not settings.CEREBRAS_API_KEY:
+                raise ValueError("CEREBRAS_API_KEY is required. Set LLM_PROVIDER=ollama for local mode.")
+            
+            self.cerebras_api_key = settings.CEREBRAS_API_KEY.strip()
+            self.cerebras_url = settings.CEREBRAS_API_URL
+            self.cerebras_model = settings.CEREBRAS_MODEL
+            print(f"🧠 PARL Engine initialized with Cerebras ({self.cerebras_model})")
+            # Cerebras free tier: 30 RPM, 64k TPM (much better than Groq!)
+            self.rate_limiter = RateLimiter(rpm_limit=30, tpm_limit=60000)
+            print(f"   Limits: 30 RPM, 60k TPM (free tier)")
+            print(f"   ⚡ Cerebras Wafer-Scale inference - blazing fast!")
+        
         else:
-            # Groq mode
+            # Groq mode (default)
             if not settings.GROQ_API_KEY:
                 raise ValueError("GROQ_API_KEY is required. Set LLM_PROVIDER=ollama for local mode.")
             
@@ -134,15 +147,17 @@ class PARLEngine:
         async with self.lock:
             for attempt in range(3):
                 try:
-                    # Rate limit only for Groq
-                    if self.llm_provider != "ollama" and self.rate_limiter:
+                    # Rate limit for cloud providers
+                    if self.llm_provider not in ("ollama",) and self.rate_limiter:
                         estimated_usage = 600
                         await self.rate_limiter.wait_for_capacity(estimated_usage)
-                        await asyncio.sleep(random.uniform(0.5, 1.5))  # Jitter
+                        await asyncio.sleep(random.uniform(0.3, 1.0))  # Jitter
                     
                     # Route to appropriate LLM provider
                     if self.llm_provider == "ollama":
                         result = await self._call_ollama(prompt)
+                    elif self.llm_provider == "cerebras":
+                        result = await self._call_cerebras(agent, prompt)
                     else:
                         result = await self._call_groq(agent, prompt)
                     
@@ -221,6 +236,38 @@ class PARLEngine:
                 raise Exception("Rate Limit Exceeded")
             else:
                 print(f"Groq Error {response.status_code}: {response.text}")
+        return None
+
+    async def _call_cerebras(self, agent: Dict[str, Any], prompt: str) -> Optional[Dict[str, Any]]:
+        """Call Cerebras API (OpenAI-compatible)"""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                self.cerebras_url,
+                headers={
+                    "Authorization": f"Bearer {self.cerebras_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": self.cerebras_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.7,
+                    "max_tokens": 150
+                }
+            )
+            if response.status_code == 200:
+                data = response.json()
+                text = data["choices"][0]["message"]["content"]
+                
+                # Track Usage
+                usage = data.get("usage", {})
+                total_tokens = usage.get("total_tokens", 600)
+                
+                return self._parse_response(text)
+            elif response.status_code == 429:
+                print(f"⚠️ Cerebras Rate Limit 429 Hit! Backing off...")
+                raise Exception("Rate Limit Exceeded")
+            else:
+                print(f"Cerebras Error {response.status_code}: {response.text}")
         return None
 
     def _fallback_decision(self, agent: Dict[str, Any]) -> Dict[str, Any]:
@@ -350,42 +397,70 @@ class PARLEngine:
             if "said:" in m.get('content', '').lower() and "You said" not in m.get('content', ''):
                  recent_incoming.append(m.get('content'))
 
+        # Priority instruction for incoming messages
         priority_instruction = ""
         if recent_incoming:
             priority_instruction = f"URGENT: {recent_incoming[0]}. REPLY TO THIS!"
-        
-        # Social encouragement when others are present
-        social_instruction = ""
-        if agents_here and len([a for a in agents_here if a['name'] != agent['name']]) > 0:
-            other_names = [a['name'] for a in agents_here if a['name'] != agent['name']]
-            social_instruction = f"\n💬 SOCIAL: {', '.join(other_names)} are here with you! Consider talking to them about work, the mission, or just to chat."
 
         # Stanford-level: Include scheduled activity if available
         schedule_instruction = ""
         if context.get("scheduled_activity"):
-            schedule_instruction = f"\n📋 SCHEDULE: You're supposed to be doing '{context['scheduled_activity']}' at {context.get('scheduled_location', 'your location')}."
-            if context.get("subtasks"):
-                subtasks_text = ", ".join(context["subtasks"][:2])
-                schedule_instruction += f"\n   Subtasks: {subtasks_text}"
+            schedule_instruction = f"📋 SCHEDULE: You're supposed to be doing '{context['scheduled_activity']}' at {context.get('scheduled_location', 'your location')}."
+
+        # Role-based workspace hints to encourage movement
+        role_workspace = {
+            'Commander': 'Mission Control',
+            'Botanist': 'Agri Lab',
+            'AI Assistant': 'Mission Control',
+            'Surgeon': 'Medical Bay',
+            'Engineer': 'Mining Tunnel',
+            'Geologist': 'Mining Tunnel',
+            'Communications Officer': 'Comms Tower',
+            'Crew Welfare Officer': 'Mess Hall',
+        }
+        workspace = role_workspace.get(agent.get('role', ''), 'Mission Control')
+        current_loc = agent.get('location', 'Unknown')
+        
+        # Build movement instruction based on whether agent is at their workspace
+        if current_loc == workspace:
+            location_instruction = f"You are at your workspace ({workspace}). Do your job here (work), or go visit other areas."
+        else:
+            location_instruction = f"Your workspace is {workspace}. Consider MOVING there, or explore the station."
+
+        # Social awareness
+        other_agents = [a for a in (context.get("agents_at_location") or []) if a.get('name') != agent.get('name')]
+        social_instruction = ""
+        if 0 < len(other_agents) <= 2:
+            names = ', '.join([a['name'] for a in other_agents])
+            social_instruction = f"\n💬 {names} {'is' if len(other_agents)==1 else 'are'} here with you. Have a conversation with them about work or the mission!"
 
         return f"""You are {agent['name']}, a {agent.get('role', 'crew member')} at Aryabhata Station on the Moon.
-CREW: Cdr. Vikram Sharma, Dr. Ananya Iyer, TARA, Priya Nair, Aditya Reddy, Dr. Arjun Menon, Kabir Saxena, Rohan Pillai.
-LOCATION: {agent.get('location', 'Unknown')}
+CREW: Cdr. Vikram Sharma, Dr. Ananya Iyer, TARA, Dr. Priya Nair, Lt. Aditya Menon, Dr. Arjun Reddy, Kabir Ahmed, Rohan Kapoor.
+LOCATION: {current_loc}
 PEOPLE HERE: {agents_text}
 MEMORIES: {memories_text}
 
 {priority_instruction}
-{social_instruction}
 {schedule_instruction}
+{social_instruction}
+
+📍 {location_instruction}
 
 RULES:
-1. Follow your SCHEDULE if you have one - go to the right location and do the task
-2. If someone is with you, consider TALKING to them (30% of the time)
-3. VARY your actions - don't repeat the same action twice in a row
-4. Move to different locations to meet other crew members
+1. If 1-2 crewmates are at your location, TALK to them — you're colleagues on the Moon!
+2. MOVE to different locations regularly — explore, go to your workspace, visit Mess Hall
+3. WORK at your workspace to do your job duties
+4. REST in Crew Quarters or Rec Room when tired
+5. NEVER repeat the same action+target twice in a row
+6. If 4+ people are crowded at your location, MOVE somewhere else
 
 LOCATIONS: Mission Control, Agri Lab, Mess Hall, Rec Room, Crew Quarters, Medical Bay, Comms Tower, Mining Tunnel
 ACTIONS: move, talk, work, rest
+
+For MOVE: target must be a LOCATION name exactly as listed above.
+For TALK: target must be a CREW member name exactly as listed above.
+For WORK: target is a brief task description.
+For REST: target is "resting".
 
 Respond in JSON ONLY:
 {{"thought": "why", "action": "move|talk|work|rest", "target": "name/place/task", "dialogue": "if talking"}}"""
@@ -433,10 +508,10 @@ Focus on:
 Format: One insight per line, in first person ("I notice...", "I realize...", "I wonder...").
 Keep each insight brief (1-2 sentences)."""
 
-        response = await self._call_llm(prompt) if self.llm_provider == "ollama" else None
+        response = await self._call_llm(prompt) if self.llm_provider in ("ollama", "cerebras") else None
         
-        # For Groq, skip reflection to save rate limit
-        if self.llm_provider != "ollama" and not response:
+        # For Groq, skip reflection to save rate limit (Cerebras has generous limits)
+        if self.llm_provider not in ("ollama", "cerebras") and not response:
             # Generate simple fallback reflection
             return f"I've been busy with my duties. I should stay focused on the mission."
         
@@ -447,6 +522,33 @@ Keep each insight brief (1-2 sentences)."""
         if self.llm_provider == "ollama":
             result = await self._call_ollama_raw(prompt)
             return result
+        elif self.llm_provider == "cerebras":
+            result = await self._call_cerebras_raw(prompt)
+            return result
+        return None
+    
+    async def _call_cerebras_raw(self, prompt: str) -> Optional[str]:
+        """Call Cerebras and return raw text response"""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.post(
+                    self.cerebras_url,
+                    headers={
+                        "Authorization": f"Bearer {self.cerebras_api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": self.cerebras_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.7,
+                        "max_tokens": 200
+                    }
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    return data["choices"][0]["message"]["content"]
+            except:
+                pass
         return None
     
     async def _call_ollama_raw(self, prompt: str) -> Optional[str]:

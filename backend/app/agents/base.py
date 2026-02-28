@@ -8,6 +8,9 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import uuid
 
+# Import the new CognitiveState module
+from ..memory.scratch import CognitiveState, create_cognitive_state_for_agent
+
 
 @dataclass
 class Memory:
@@ -33,16 +36,6 @@ class Memory:
         
         # Combined score
         return (recency_score + self.importance / 10.0 + relevance) / 3.0
-
-
-@dataclass
-class AgentState:
-    """Current state of an agent"""
-    location: str = "Crew Quarters"
-    activity: str = "idle"
-    energy: float = 100.0  # 0-100
-    mood: str = "neutral"  # happy, neutral, anxious, sad
-    current_goal: Optional[str] = None
 
 
 @dataclass
@@ -74,24 +67,26 @@ class BaseAgent(ABC):
         backstory: str = "",
         secret: str = ""
     ):
-        self.id = str(uuid.uuid4())
+        self.id = f"{name}_{str(uuid.uuid4())[:8]}" # Name + Short UUID
         self.name = name
         self.role = role
         self.personality = personality
         self.backstory = backstory
         self.secret = secret  # Hidden motivation
         
-        # State
-        self.state = AgentState()
+        # Initialize Cognitive State (Working Memory)
+        self.cognitive_state = create_cognitive_state_for_agent(
+            name=name,
+            role=role,
+            backstory=backstory,
+            personality_traits=f"O={personality.openness:.1f}, C={personality.conscientiousness:.1f}, E={personality.extraversion:.1f}, A={personality.agreeableness:.1f}, N={personality.neuroticism:.1f}"
+        )
         
-        # Memory stream
+        # Memory stream (Long-term memory)
         self.memory_stream: List[Memory] = []
         
         # Relationships with other agents (name -> strength 0-100)
         self.relationships: Dict[str, float] = {}
-        
-        # Current plan
-        self.current_plan: List[str] = []
         
         # LLM interface (set by subclass)
         self.llm = None
@@ -104,13 +99,18 @@ class BaseAgent(ABC):
         Observe the environment and create observations
         """
         observations = []
+        current_location = self.cognitive_state.world_location
+        # Use the agent's already-synced current_time (set by sim loop) for observations
+        # Do NOT override current_time here — it's synced by _simulation_loop using
+        # the canonical WorldState.get_current_datetime() to avoid time mismatches.
+        current_time = self.cognitive_state.current_time or environment.get("time", "unknown")
         
         # See agents in same location
         agents_here = environment.get("agents_at_location", [])
         for agent in agents_here:
             if agent["name"] != self.name:
                 observations.append(
-                    f"Saw {agent['name']} ({agent['role']}) at {self.state.location}"
+                    f"Saw {agent['name']} ({agent['role']}) at {current_location}"
                 )
         
         # Observe events
@@ -119,10 +119,9 @@ class BaseAgent(ABC):
             observations.append(f"Noticed: {event}")
         
         # Check time
-        current_time = environment.get("time", "unknown")
         observations.append(f"Current time: {current_time}")
         
-        # Store observations as memories
+        # Store observations as memories if significant
         for obs in observations:
             self.add_memory(obs, memory_type="observation", importance=3.0)
         
@@ -133,27 +132,47 @@ class BaseAgent(ABC):
     def act(self, action: str, target: Optional[str] = None) -> Dict[str, Any]:
         """
         A - ACTION
-        Execute an action in the environment
+        Execute an action in the environment and update cognitive state
         """
         result = {"success": False, "message": ""}
         
         if action == "move":
-            self.state.location = target
-            self.state.activity = "moving"
+            # Update cognitive state location
+            self.cognitive_state.world_location = target
+            self.cognitive_state.start_action(
+                address=target,
+                duration=10,
+                description=f"Moving to {target}",
+                emoji="🚶"
+            )
             result = {"success": True, "message": f"Moved to {target}"}
             
         elif action == "talk":
-            self.state.activity = f"talking to {target}"
+            self.cognitive_state.start_action(
+                address=self.cognitive_state.world_location,
+                duration=5,
+                description=f"Talking to {target}",
+                emoji="💬"
+            )
+            self.cognitive_state.chatting_with = target
             result = {"success": True, "message": f"Talking to {target}"}
             
         elif action == "work":
-            self.state.activity = f"working on {target}"
-            self.state.energy -= 10
+            self.cognitive_state.start_action(
+                address=self.cognitive_state.world_location,
+                duration=60,
+                description=f"Working on {target}",
+                emoji="💼"
+            )
             result = {"success": True, "message": f"Working on {target}"}
             
         elif action == "rest":
-            self.state.activity = "resting"
-            self.state.energy = min(100, self.state.energy + 20)
+            self.cognitive_state.start_action(
+                address=self.cognitive_state.world_location,
+                duration=30,
+                description="Resting",
+                emoji="😴"
+            )
             result = {"success": True, "message": "Resting"}
         
         return result
@@ -208,6 +227,9 @@ class BaseAgent(ABC):
             delta = 5.0 if outcome.get("positive", True) else -5.0
             current = self.relationships.get(agent_name, 50.0)
             self.relationships[agent_name] = max(0, min(100, current + delta))
+            
+        # Check for reflection trigger
+        self.cognitive_state.trigger_reflection_check(importance)
     
     def add_memory(
         self,
@@ -216,16 +238,31 @@ class BaseAgent(ABC):
         importance: float = 5.0,
         related_agents: List[str] = None
     ) -> Memory:
-        """Add a new memory to the stream"""
+        """Add a new memory to the stream AND the global memory store"""
         memory = Memory(
             content=content,
             timestamp=datetime.now(),
             importance=importance,
             memory_type=memory_type,
             related_agents=related_agents or [],
-            location=self.state.location
+            location=self.cognitive_state.world_location
         )
         self.memory_stream.append(memory)
+        
+        # Also persist to global memory store so the API can retrieve it
+        try:
+            from ..memory import memory_store
+            memory_store.add_memory(
+                agent_name=self.name,
+                content=content,
+                memory_type=memory_type,
+                importance=importance,
+                related_agents=related_agents or [],
+                location=self.cognitive_state.world_location
+            )
+        except Exception as e:
+            pass  # Don't crash if memory store unavailable
+        
         return memory
     
     # ==================== PARL LOOP ====================
@@ -255,19 +292,24 @@ class BaseAgent(ABC):
     
     def to_dict(self) -> Dict[str, Any]:
         """Serialize agent state for API/frontend"""
+        # Mix base identity with dynamic cognitive state
+        state_dict = self.cognitive_state.to_dict()
+        
         return {
             "id": self.id,
             "name": self.name,
             "role": self.role,
-            "location": self.state.location,
-            "activity": self.state.activity,
-            "energy": self.state.energy,
-            "mood": self.state.mood,
+            "location": self.cognitive_state.world_location,
+            "activity": self.cognitive_state.act_description,
+            "emoji": self.cognitive_state.act_emoji,
+            "mood": "neutral",  # Could be added to cognitive state
             "personality": {
                 "openness": self.personality.openness,
                 "conscientiousness": self.personality.conscientiousness,
                 "extraversion": self.personality.extraversion,
                 "agreeableness": self.personality.agreeableness,
                 "neuroticism": self.personality.neuroticism
-            }
+            },
+            # Return full cognitive state for debug/display
+            "cognitive_state": state_dict
         }

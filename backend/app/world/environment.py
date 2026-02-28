@@ -1,6 +1,7 @@
 """
 World Environment for Aryabhata Station
 Manages hierarchical locations (Buildings -> Sub-areas), time, and simulation state.
+Integrated with StationNavigator for valid movement paths.
 
 Uses ACCELERATED simulation time:
 - 1 real second = 1 simulation minute
@@ -13,6 +14,8 @@ from enum import Enum
 from datetime import datetime
 import time
 
+from .pathfinder import get_navigator, StationNavigator
+
 class Location(Enum):
     """Main buildings at Aryabhata Station"""
     MISSION_CONTROL = "Mission Control"
@@ -23,11 +26,7 @@ class Location(Enum):
     MEDICAL_BAY = "Medical Bay"
     COMMS_TOWER = "Comms Tower"
     MINING_TUNNEL = "Mining Tunnel"
-    # New Locations
-    HANGAR_BAY = "Hangar Bay"
-    OBSERVATORY = "Observatory"
-    POWER_STATION = "Power Station"
-    ROBOTICS_WORKSHOP = "Robotics Workshop"
+
 
 @dataclass
 class LocationNode:
@@ -37,7 +36,7 @@ class LocationNode:
     parent: Optional['LocationNode'] = None
     children: Dict[str, 'LocationNode'] = field(default_factory=dict)
     agents: List[str] = field(default_factory=list)  # List of agent IDs
-
+    
     def add_child(self, child_name: str, child_type: str = "room") -> 'LocationNode':
         child = LocationNode(name=child_name, type=child_type, parent=self)
         self.children[child_name] = child
@@ -100,6 +99,14 @@ class WorldState:
         day = (total_days % 7) + 1
         return week, day, hour, minute
     
+    def get_current_datetime(self) -> datetime:
+        """Single canonical source of simulation datetime.
+        Used by sim loop, perceive(), and get_environment_for_agent()."""
+        from datetime import timedelta
+        self.update_time()
+        base_date = datetime(2030, 1, 1, self.start_sim_hour, self.start_sim_minute)
+        return base_date + timedelta(minutes=self.accumulated_sim_minutes)
+    
     @property
     def week(self) -> int: return self._get_current_sim_time()[0]
     @property
@@ -122,47 +129,25 @@ class Environment:
         self.state = WorldState()
         self.root = LocationNode(name="Aryabhata Station", type="station")
         self._build_hierarchy()
+        self.navigator: StationNavigator = get_navigator()
     
     def _build_hierarchy(self):
-        """Initialize all buildings (Sub-areas DISABLED for now)"""
-        # Mission Control
+        """Initialize all 8 buildings at Aryabhata Station"""
         self.root.add_child(Location.MISSION_CONTROL.value, "building")
-        
-        # Crew Quarters
         self.root.add_child(Location.CREW_QUARTERS.value, "building")
-        
-        # Medical Bay
         self.root.add_child(Location.MEDICAL_BAY.value, "building")
-        
-        # Agri Lab
         self.root.add_child(Location.AGRI_LAB.value, "building")
-        
-        # Mess Hall
         self.root.add_child(Location.MESS_HALL.value, "building")
-        
-        # Comms Tower
         self.root.add_child(Location.COMMS_TOWER.value, "building")
-        
-        # Mining Tunnel
         self.root.add_child(Location.MINING_TUNNEL.value, "building")
-        
-        # Hangar Bay
-        self.root.add_child(Location.HANGAR_BAY.value, "building")
-        
-        # Observatory
-        self.root.add_child(Location.OBSERVATORY.value, "building")
-        
-        # Power Station
-        self.root.add_child(Location.POWER_STATION.value, "building")
-        
-        # Robotics Workshop
-        self.root.add_child(Location.ROBOTICS_WORKSHOP.value, "building")
-
-        # Rec Room
         self.root.add_child(Location.REC_ROOM.value, "building")
+
     
     def _find_node(self, full_path: str) -> Optional[LocationNode]:
         """Find a node by its full path (e.g. 'Mission Control/Command Deck')"""
+        if not full_path:
+            return None
+            
         parts = full_path.split("/")
         current = self.root
         
@@ -175,7 +160,6 @@ class Environment:
                 current = current.children[part]
             else:
                 # Fallback: check if 'part' matches a building name directly
-                # This handles lazy paths like "Command Deck" if unique, but better to be strict
                 return None
         return current
 
@@ -210,7 +194,6 @@ class Environment:
         """
         Move agent between locations.
         Supports full paths: "Mission Control/Command Deck"
-        Now with case-insensitive matching!
         """
         # Remove from old
         if from_loc:
@@ -218,8 +201,10 @@ class Environment:
             if old_node and agent_id in old_node.agents:
                 old_node.agents.remove(agent_id)
         
-        # Add to new - with case-insensitive matching
+        # Find new node
         new_node = self._find_node(to_loc)
+        
+        # If not found, try robust search
         if not new_node:
             # Try case-insensitive match for building name
             to_loc_lower = to_loc.lower().strip()
@@ -244,11 +229,17 @@ class Environment:
             return False
 
     def get_environment_for_agent(self, agent_location: str) -> Dict[str, Any]:
+        """Get the current environment state for a specific agent"""
+        # Use the single canonical datetime source
+        current_dt = self.state.get_current_datetime()
+        
         return {
-            "time": self.state.time_string,
+            "time": current_dt, # Return datetime object
+            "time_string": self.state.time_string, # Keep string for display if needed
             "hour": self.state.hour,
             "is_night": self.state.is_night,
             "agents_at_location": self.get_agents_at_location(agent_location),
+            "valid_moves": self.navigator.get_adjacent_locations(agent_location),
             "events": self.state.active_events,
             "location": agent_location
         }
@@ -257,7 +248,7 @@ class Environment:
     def set_time_speed(self, multiplier: float): self.state.time_multiplier = max(0.1, min(60.0, multiplier))
     
     def to_dict(self) -> Dict[str, Any]:
-        """Return full state including hierarchical locations"""
+        """Return full state including hierarchical locations and blocked paths"""
         return {
             "time": self.state.time_string,
             "week": self.state.week,
@@ -267,6 +258,6 @@ class Environment:
             "is_running": self.state.is_running,
             "is_night": self.state.is_night,
             "locations": self.root.to_dict()["children"], # Send children of root (Buildings)
-            "active_events": self.state.active_events
+            "active_events": self.state.active_events,
+            "blocked_connections": list(self.navigator.blocked_paths) if self.navigator else []
         }
-

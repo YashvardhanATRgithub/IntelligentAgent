@@ -1,13 +1,14 @@
 """
-Cognitive Modules Package
-Stanford-level cognitive architecture for generative agents
+Cognitive Modules for Generative Agents
+
+This package contains the higher-level cognitive functions:
+- Conversation: Multi-turn dialogue with turn-taking
+- More modules to come (perception, emotion, etc.)
 """
-from .perceive import PerceptionEngine, Observation, perception_engine
-from .reflect import ReflectionEngine, reflection_engine
-from .converse import ConversationEngine, Conversation, conversation_engine
+from .converse import ConversationChoreographer, ConversationContext, ConversationResult
 
 __all__ = [
-    'PerceptionEngine', 'Observation', 'perception_engine',
-    'ReflectionEngine', 'reflection_engine',
-    'ConversationEngine', 'Conversation', 'conversation_engine'
+    "ConversationChoreographer",
+    "ConversationContext",
+    "ConversationResult",
 ]

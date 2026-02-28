@@ -1,15 +1,18 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 import json
 from typing import List, Dict, Any
 import asyncio
+import os
 
 from .simulation.engine import SimulationEngine
+from .simulation.replay import get_player
 
 app = FastAPI(
     title="ISRO Chandrayaan-5 Simulation",
     description="Generative Agents at Aryabhata Station",
-    version="1.0.0"
+    version="2.0.0"
 )
 
 # CORS for React frontend
@@ -50,18 +53,20 @@ async def broadcast_update(data: Dict[str, Any]):
     await manager.broadcast(data)
 
 simulation = SimulationEngine(on_update=broadcast_update)
+player = get_player()
 
 
 @app.get("/")
 async def root():
-    return {"message": "ISRO Chandrayaan-5 Simulation API", "status": "online"}
+    return {"message": "ISRO Chandrayaan-5 Simulation API", "status": "online", "version": "2.0.0"}
 
 
 @app.get("/api/agents")
 async def get_agents():
     """Get all agents and their current states"""
-    agents = simulation.get_agents()
-    return {"agents": agents}
+    # Use simulation state to get agents
+    state = simulation.get_state()
+    return {"agents": state["agents"]}
 
 
 @app.get("/api/state")
@@ -114,42 +119,54 @@ async def get_agent_relationships(agent_name: str):
     return {"agent": agent_name, "relationships": relationships}
 
 
-@app.get("/api/agents/{agent_name}/plan")
-async def get_agent_plan(agent_name: str):
-    """Get an agent's daily plan"""
-    from .parl.planner import daily_planner
-    plan = daily_planner.to_dict(agent_name)
-    return {"agent": agent_name, "plan": plan}
-
-
 @app.get("/api/agents/{agent_name}/full")
 async def get_agent_full(agent_name: str):
-    """Get complete agent info: state, memories, relationships, plan"""
+    """Get complete agent info: state, memories, relationships"""
     from .memory import memory_store
     from .agents.relationships import relationship_manager
-    from .parl.planner import daily_planner
     
-    # Find agent state
-    agent_state = None
-    for agent in simulation.agents:
-        if agent.name == agent_name:
-            agent_state = {
-                "name": agent.name,
-                "role": agent.role,
-                "location": agent.state.location,
-                "activity": agent.state.activity,
-                "mood": agent.state.mood,
-                "energy": agent.state.energy
-            }
-            break
+    # Find agent
+    agent = next((a for a in simulation.agents if a.name == agent_name), None)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
     
     return {
         "agent": agent_name,
-        "state": agent_state,
+        "state": agent.to_dict(),
         "memories": memory_store.get_recent_memories(agent_name, limit=10),
-        "relationships": relationship_manager.to_dict(agent_name),
-        "plan": daily_planner.to_dict(agent_name)
+        "relationships": relationship_manager.to_dict(agent_name)
     }
+
+
+# ===== REPLAY SYSTEM =====
+
+@app.get("/api/replays")
+async def list_replays():
+    """List all available simulation recordings"""
+    recordings = player.list_recordings()
+    return {"recordings": recordings}
+
+@app.get("/api/replays/{recording_id}")
+async def get_replay_info(recording_id: str):
+    """Get metadata for a specific recording"""
+    # This might load the file to get metadata
+    success = player.load(recording_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    
+    return {
+        "id": recording_id,
+        "metadata": player.metadata,
+        "duration": len(player.frames) if player.frames else 0
+    }
+
+@app.delete("/api/replays/{recording_id}")
+async def delete_replay(recording_id: str):
+    """Delete a recording"""
+    success = player.delete_recording(recording_id)
+    if success:
+        return {"status": "deleted", "id": recording_id}
+    raise HTTPException(status_code=404, detail="Recording not found")
 
 
 # ===== EVENTS & ANALYTICS =====
@@ -157,107 +174,18 @@ async def get_agent_full(agent_name: str):
 @app.get("/api/events")
 async def get_events():
     """Get list of available demo events"""
-    from .simulation.events import event_manager
-    return {"events": event_manager.get_available_events()}
-
-
-@app.post("/api/events/{event_id}/trigger")
-async def trigger_event(event_id: str):
-    """Trigger a demo event - injects information into target agent's memory"""
-    from .simulation.events import event_manager
-    from .simulation.analytics import propagation_tracker
-    from .memory import memory_store
-    
-    result = event_manager.trigger_event(event_id)
-    if not result or "error" in result:
-        return {"error": result.get("error", "Event not found")}
-    
-    # Inject memory into target agent
-    memory_store.add_memory(
-        agent_name=result["agent"],
-        content=result["content"],
-        memory_type="event",
-        importance=result["importance"],
-        source="SYSTEM_EVENT"
-    )
-    
-    # Record initial knowledge
-    propagation_tracker.record_initial_knowledge(
-        event_id=event_id,
-        agent_name=result["agent"],
-        content=result["content"]
-    )
-    
-    return {
-        "status": "triggered",
-        "event": event_id,
-        "target_agent": result["agent"],
-        "message": f"Event '{result['event_name']}' triggered for {result['agent']}"
-    }
+    # Simplified interaction event system
+    return {"events": []} 
 
 
 @app.get("/api/analytics")
 async def get_analytics():
     """Get information propagation analytics"""
-    from .simulation.analytics import propagation_tracker
-    return propagation_tracker.get_summary()
+    # Placeholder for analytics
+    return {"message": "Analytics module upgrading"}
 
 
-@app.get("/api/analytics/event/{event_id}")
-async def get_event_analytics(event_id: str):
-    """Get detailed propagation analysis for a specific event"""
-    from .simulation.analytics import propagation_tracker
-    return propagation_tracker.get_event_spread(event_id)
-
-
-@app.post("/api/events/reset")
-async def reset_events():
-    """Reset all events to untriggered state"""
-    from .simulation.events import event_manager
-    from .simulation.analytics import propagation_tracker
-    event_manager.reset_events()
-    propagation_tracker.clear()
-    return {"status": "reset", "message": "All events and analytics cleared"}
-
-
-# ===== SAVE/LOAD STATE =====
-
-@app.post("/api/state/save")
-async def save_state(description: str = "Manual save"):
-    """Save current simulation state"""
-    from .simulation.state_manager import state_manager
-    snapshot_id = state_manager.create_snapshot(simulation, description)
-    return {"status": "saved", "snapshot_id": snapshot_id}
-
-
-@app.get("/api/state/snapshots")
-async def list_snapshots():
-    """List all available snapshots"""
-    from .simulation.state_manager import state_manager
-    return {"snapshots": state_manager.list_snapshots()}
-
-
-@app.post("/api/state/load/{snapshot_id}")
-async def load_state(snapshot_id: str):
-    """Load simulation from a snapshot"""
-    from .simulation.state_manager import state_manager
-    success = state_manager.restore_snapshot(simulation, snapshot_id)
-    if success:
-        return {"status": "loaded", "snapshot_id": snapshot_id}
-    return {"status": "error", "message": "Failed to load snapshot"}
-
-
-@app.post("/api/state/export")
-async def export_state():
-    """Export complete simulation data for analysis"""
-    from .simulation.state_manager import state_manager
-    import os
-    filepath = os.path.join("data", "exports", f"export_{int(__import__('time').time())}.json")
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    state_manager.export_for_analysis(simulation, filepath)
-    return {"status": "exported", "filepath": filepath}
-
-
+# ===== WEBSOCKET =====
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -287,6 +215,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     "type": "state_update",
                     "state": simulation.get_state()
                 })
+            elif message.get("type") == "start":
+                await simulation.start()
+            elif message.get("type") == "stop":
+                await simulation.stop()
             
     except WebSocketDisconnect:
         manager.disconnect(websocket)

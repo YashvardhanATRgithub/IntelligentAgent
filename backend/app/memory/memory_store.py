@@ -5,7 +5,12 @@ Production-ready semantic search for agent memories - Stanford-level quality
 Uses real semantic embeddings from sentence-transformers for proper
 similarity search, surpassing Stanford's implementation.
 """
-import faiss
+try:
+    import faiss
+except ImportError:
+    faiss = None
+    print("[Memory] ⚠ FAISS not installed. Falling back to simple memory storage (semantic search disabled).")
+
 import numpy as np
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -165,7 +170,7 @@ class MemoryStore:
         self.embedding_dim = self.embedder.dimension
         
         # FAISS index per agent
-        self.indices: Dict[str, faiss.IndexFlatIP] = {}  # Inner product for cosine sim
+        self.indices: Dict[str, Any] = {}  # Type Any to allow for missing faiss
         self.memories: Dict[str, List[Memory]] = {}
         
         self._load_all()
@@ -194,8 +199,9 @@ class MemoryStore:
                     agent_name = data.get('agent_name', filename.replace('.json', ''))
                     self.memories[agent_name] = []
                     
-                    # Initialize FAISS index (Inner Product for normalized vectors = cosine sim)
-                    self.indices[agent_name] = faiss.IndexFlatIP(self.embedding_dim)
+                    # Initialize FAISS index
+                    if faiss:
+                        self.indices[agent_name] = faiss.IndexFlatIP(self.embedding_dim)
                     
                     # Batch encode all memories for efficiency
                     memory_contents = [m['content'] for m in data.get('memories', [])]
@@ -219,8 +225,9 @@ class MemoryStore:
                             self.memories[agent_name].append(memory)
                             
                             # Add to FAISS index (normalize for cosine similarity)
-                            normalized = embeddings[i] / (np.linalg.norm(embeddings[i]) + 1e-8)
-                            self.indices[agent_name].add(normalized.reshape(1, -1))
+                            if faiss:
+                                normalized = embeddings[i] / (np.linalg.norm(embeddings[i]) + 1e-8)
+                                self.indices[agent_name].add(normalized.reshape(1, -1))
                         
                 except Exception as e:
                     print(f"Error loading memories for {filename}: {e}")
@@ -268,7 +275,8 @@ class MemoryStore:
         # Initialize if needed
         if agent_name not in self.memories:
             self.memories[agent_name] = []
-            self.indices[agent_name] = faiss.IndexFlatIP(self.embedding_dim)
+            if faiss:
+                self.indices[agent_name] = faiss.IndexFlatIP(self.embedding_dim)
         
         memory_id = f"{agent_name}_{datetime.now().timestamp()}"
         
@@ -289,8 +297,9 @@ class MemoryStore:
         self.memories[agent_name].append(memory)
         
         # Add normalized embedding to FAISS for cosine similarity
-        normalized = memory.embedding / (np.linalg.norm(memory.embedding) + 1e-8)
-        self.indices[agent_name].add(normalized.reshape(1, -1))
+        if faiss and agent_name in self.indices:
+            normalized = memory.embedding / (np.linalg.norm(memory.embedding) + 1e-8)
+            self.indices[agent_name].add(normalized.reshape(1, -1))
         
         # Persist every 5 memories
         if len(self.memories[agent_name]) % 5 == 0:
@@ -312,21 +321,38 @@ class MemoryStore:
         Retrieve relevant memories using semantic similarity search.
         
         Stanford-style scoring: combines recency, relevance, and importance.
-        
-        Args:
-            agent_name: Agent to search memories for
-            query: Query text for semantic search
-            limit: Maximum memories to return
-            memory_type: Filter by memory type (optional)
-            recency_weight: Weight for recency score (0-1)
-            relevance_weight: Weight for semantic relevance (0-1)
-            importance_weight: Weight for importance score (0-1)
-        
-        Returns:
-            List of memory dicts with combined scores
         """
         if agent_name not in self.memories or not self.memories[agent_name]:
             return []
+        
+        # Fallback if FAISS not available
+        if not faiss or agent_name not in self.indices:
+            # Simple reverse Sort by timestamp if no semantic search
+            sorted_memories = sorted(
+                self.memories[agent_name],
+                key=lambda m: m.timestamp_unix,
+                reverse=True
+            )
+            # Filter by memory type if set
+            if memory_type:
+                sorted_memories = [m for m in sorted_memories if m.memory_type == memory_type]
+                
+            return [
+                {
+                    "id": m.id,
+                    "content": m.content,
+                    "memory_type": m.memory_type,
+                    "importance": m.importance,
+                    "timestamp": m.timestamp.isoformat(),
+                    "location": m.location,
+                    "related_agents": m.related_agents,
+                    "relevance_score": 0.0,
+                    "recency_score": 1.0, # Dummy
+                    "combined_score": m.importance / 10.0,
+                    "source": m.source
+                }
+                for m in sorted_memories[:limit]
+            ]
         
         # Get query embedding
         query_embedding = self._text_to_embedding(query)

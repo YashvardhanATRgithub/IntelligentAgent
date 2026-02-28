@@ -122,16 +122,11 @@ function App() {
   useEffect(() => {
     loadAgents();
 
-    // Poll state every second for real-time time updates
+    // Poll state every second for real-time updates (agents, time, activities)
     const stateInterval = setInterval(async () => {
       try {
         const state = await api.getState();
-        if (state.time) {
-          setSimulationTime(state.time);
-        }
-        if (state.is_running !== undefined) {
-          setIsSimulationRunning(state.is_running);
-        }
+        updateFromState(state);
       } catch (e) {
         // Ignore polling errors
       }

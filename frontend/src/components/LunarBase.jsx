@@ -45,7 +45,7 @@ function getPathBetweenLocations(fromLoc, toLoc) {
 const MOVE_SPEED = 0.8; // Units per frame (tuned for smooth movement)
 const FRAMES_PER_MOVE = 60; // Frames to complete one location move
 
-function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isTalking, allAgents, isPaused }) {
+function Astronaut({ agent, currentLocation, speechBubble, isTalking, allAgents, isPaused }) {
     const groupRef = useRef();
     const leftArmRef = useRef();
     const rightArmRef = useRef();
@@ -61,6 +61,9 @@ function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isT
     const moveTarget = useRef(null);
     const moveStart = useRef(null);
     const queuedMove = useRef(null); // Queue next move if one is in progress
+
+    // Track previous location with a ref — reliably detects changes
+    const lastLocationRef = useRef(currentLocation);
 
     const AGENT_SCALE = 3.5;
 
@@ -82,7 +85,7 @@ function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isT
 
     // When location changes, queue the move
     useEffect(() => {
-        if (currentLocation !== previousLocation && previousLocation) {
+        if (currentLocation !== lastLocationRef.current) {
             const target = getBasePosition(currentLocation, agent.name);
 
             if (executeCount.current > 0) {
@@ -95,8 +98,9 @@ function Astronaut({ agent, currentLocation, previousLocation, speechBubble, isT
                 moveTarget.current = target;
                 executeCount.current = FRAMES_PER_MOVE;
             }
+            lastLocationRef.current = currentLocation;
         }
-    }, [currentLocation, previousLocation, agent.name]);
+    }, [currentLocation, agent.name]);
 
     useFrame((state, delta) => {
         if (!groupRef.current) return;
@@ -623,7 +627,7 @@ function LunarRover({ position }) {
 }
 
 // Main Scene
-function Scene({ agents, activities, selectedLocation, setSelectedLocation, previousLocations, isPaused, onAgentClick }) {
+function Scene({ agents, activities, selectedLocation, setSelectedLocation, isPaused, onAgentClick }) {
     const talkingAgents = useMemo(() => {
         const talking = new Set();
         activities.filter(a => a.action === 'talk' && a.details?.includes('Said to')).slice(0, 5).forEach(a => talking.add(a.agent));
@@ -675,7 +679,6 @@ function Scene({ agents, activities, selectedLocation, setSelectedLocation, prev
                     key={agent.name}
                     agent={agent}
                     currentLocation={agent.location}
-                    previousLocation={previousLocations[agent.name]}
                     speechBubble={speechBubbles[agent.name]}
                     isTalking={talkingAgents.has(agent.name)}
                     allAgents={agents}
@@ -725,17 +728,7 @@ function AgentStatusBar({ agents, activities, onAgentClick }) {
 export default function LunarBase({ agents, activities, onAgentClick, isPaused = false }) {
     // Local state for location selection (restored from old implementation)
     const [selectedLocation, setSelectedLocation] = useState(null);
-    const [previousLocations, setPreviousLocations] = useState({});
 
-    useEffect(() => {
-        const newPrev = {};
-        agents.forEach(agent => {
-            const prev = previousLocations[agent.name];
-            if (prev !== agent.location) newPrev[agent.name] = prev || agent.location;
-            else newPrev[agent.name] = prev;
-        });
-        setPreviousLocations(newPrev);
-    }, [agents]);
 
     return (
         <div className="lunar-base-container">
@@ -746,8 +739,8 @@ export default function LunarBase({ agents, activities, onAgentClick, isPaused =
                         activities={activities}
                         selectedLocation={selectedLocation}
                         setSelectedLocation={setSelectedLocation}
-                        previousLocations={previousLocations}
                         isPaused={isPaused}
+                        onAgentClick={onAgentClick}
                     />
                 </Suspense>
             </Canvas>

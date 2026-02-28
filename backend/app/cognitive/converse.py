@@ -1,394 +1,668 @@
 """
-Conversation Module - Stanford-level multi-agent dialogue generation
+Conversation Choreographer - Turn-based dialogue for Generative Agents
 
-Based on Stanford's converse.py (~11KB) from generative_agents.
+This module implements realistic multi-turn conversations between agents
+at Aryabhata Station. It handles:
 
-Key features:
-1. Multi-turn dialogue between agents
-2. Conversation context tracking
-3. Dialogue history per agent pair
-4. LLM-based contextual responses
-5. Conversation initiation based on relationships and situations
+1. Turn-taking: Natural back-and-forth dialogue
+2. Topic management: Staying on topic while allowing natural drift
+3. Memory integration: Using past memories to inform dialogue
+4. Conversation endings: Detecting natural conclusion points
+5. Summary generation: Creating memorable summaries for reflection
 """
-
+from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime
-from enum import Enum
+from datetime import datetime, timedelta
 import json
 import re
 
 
-class ConversationType(Enum):
-    """Types of conversations"""
-    GREETING = "greeting"           # Initial hello
-    SMALL_TALK = "small_talk"       # Casual chat
-    WORK_RELATED = "work_related"   # Task/job discussion
-    EMOTIONAL = "emotional"         # Personal feelings
-    INFORMATION = "information"     # Sharing/asking info
-    URGENT = "urgent"               # Emergency/important
-    FAREWELL = "farewell"           # Ending conversation
-
-
 @dataclass
-class DialogueTurn:
-    """A single turn in a conversation"""
-    speaker: str
-    content: str
-    timestamp: datetime = field(default_factory=datetime.now)
-    emotion: str = "neutral"        # happy, sad, worried, excited, etc.
-    is_question: bool = False
-    mentioned_agents: List[str] = field(default_factory=list)
+class ConversationContext:
+    """Context for an ongoing conversation"""
+    initiator: str              # Who started the conversation
+    target: str                 # Who they're talking to
+    topic: str                  # What they're talking about
+    location: str               # Where the conversation is happening
+    start_time: datetime        # When it started
+    
+    # Conversation history: [(speaker, utterance), ...]
+    turns: List[Tuple[str, str]] = field(default_factory=list)
+    
+    # Emotional state tracking
+    initiator_emotion: str = "neutral"
+    target_emotion: str = "neutral"
+    
+    # Topic tracking
+    topics_discussed: List[str] = field(default_factory=list)
+    
+    # Conversation metadata
+    max_turns: int = 8
+    minimum_turns: int = 2
+    should_end: bool = False
+    end_reason: str = ""
 
 
-@dataclass
-class Conversation:
-    """A conversation between two or more agents"""
-    id: str
+@dataclass 
+class ConversationResult:
+    """Result of a completed conversation"""
     participants: List[str]
-    location: str
-    start_time: datetime = field(default_factory=datetime.now)
-    end_time: Optional[datetime] = None
-    turns: List[DialogueTurn] = field(default_factory=list)
-    conversation_type: ConversationType = ConversationType.SMALL_TALK
-    topic: str = ""
-    is_active: bool = True
-    
-    def add_turn(self, speaker: str, content: str, emotion: str = "neutral"):
-        """Add a dialogue turn"""
-        is_question = content.strip().endswith("?")
-        
-        # Extract mentioned agents
-        mentioned = []
-        for p in self.participants:
-            if p != speaker and p.lower() in content.lower():
-                mentioned.append(p)
-        
-        turn = DialogueTurn(
-            speaker=speaker,
-            content=content,
-            emotion=emotion,
-            is_question=is_question,
-            mentioned_agents=mentioned
-        )
-        self.turns.append(turn)
-        return turn
-    
-    def end(self):
-        """End the conversation"""
-        self.is_active = False
-        self.end_time = datetime.now()
-    
-    def get_summary(self) -> str:
-        """Get conversation summary for memory"""
-        if not self.turns:
-            return f"Brief interaction between {' and '.join(self.participants)}"
-        
-        first_turn = self.turns[0]
-        last_turn = self.turns[-1]
-        
-        return f"{first_turn.speaker} and {', '.join([p for p in self.participants if p != first_turn.speaker])} talked about {self.topic or 'various things'}. {len(self.turns)} exchanges."
-    
-    def to_prompt_context(self) -> str:
-        """Format conversation for LLM prompt"""
-        lines = [f"[Conversation at {self.location}]"]
-        for turn in self.turns[-5:]:  # Last 5 turns for context
-            lines.append(f"{turn.speaker}: {turn.content}")
-        return "\n".join(lines)
+    turns: List[Tuple[str, str]]
+    duration_minutes: int
+    topics: List[str]
+    summary: str
+    memories_for_initiator: List[str]
+    memories_for_target: List[str]
 
 
-class ConversationEngine:
+class ConversationChoreographer:
     """
-    Stanford-level conversation system.
+    Manages multi-turn conversations between agents.
     
-    Manages multi-agent dialogues with:
-    - Contextual response generation
-    - Relationship-aware dialogue
-    - Conversation memory
-    - Topic tracking
+    Uses LLM to generate natural dialogue with proper turn-taking,
+    topic management, and conversation flow.
     """
     
-    # Conversation starters based on relationship
-    GREETING_TEMPLATES = {
-        "close": [
-            "Hey {name}! How are you doing?",
-            "{name}! Great to see you.",
-            "Hi {name}, glad I ran into you."
-        ],
-        "neutral": [
-            "Hello {name}.",
-            "Hi {name}, how's it going?",
-            "Good to see you, {name}."
-        ],
-        "distant": [
-            "Hello, {name}.",
-            "{name}.",
-            "Good day, {name}."
+    def __init__(self, llm_client: Any = None):
+        """
+        Initialize the choreographer.
+        
+        Args:
+            llm_client: LLM client for generating dialogue
+        """
+        self.llm_client = llm_client
+        self.active_conversations: Dict[str, ConversationContext] = {}
+        
+        # Conversation templates for when LLM is unavailable
+        self.greeting_templates = [
+            "Hello {target}, how are you today?",
+            "Hey {target}, got a minute to talk?",
+            "{target}! Good to see you.",
+            "Hi {target}, I was hoping to run into you.",
         ]
-    }
-    
-    # Topic starters based on role
-    TOPIC_STARTERS = {
-        "Mission Commander": ["mission status", "crew safety", "Earth communications"],
-        "Botanist/Life Support": ["plant growth", "oxygen levels", "crop experiments"],
-        "AI Assistant": ["system diagnostics", "data analysis", "efficiency metrics"],
-        "Crew Welfare Officer": ["crew morale", "mental health", "team dynamics"],
-        "Systems Engineer": ["equipment status", "maintenance", "power systems"],
-        "Flight Surgeon": ["health checkups", "medical supplies", "crew fitness"],
-        "Geologist/Mining Lead": ["mining progress", "sample analysis", "geological findings"],
-        "Communications Officer": ["Earth messages", "signal quality", "family updates"]
-    }
-    
-    def __init__(self):
-        # Active conversations
-        self.active_conversations: Dict[str, Conversation] = {}
         
-        # Conversation history (last N per agent pair)
-        self.conversation_history: Dict[str, List[Conversation]] = {}
+        self.response_templates = [
+            "I'm doing well, thanks for asking.",
+            "Things are going okay. What's on your mind?",
+            "I've been busy but managing. You?",
+            "Could be better, honestly. But I'm hanging in there.",
+        ]
         
-        # Last conversation time between pairs
-        self.last_interaction: Dict[str, datetime] = {}
+        self.ending_templates = [
+            "Well, I should get back to work. Good talking to you.",
+            "Thanks for the chat. See you around.",
+            "I need to head out, but let's talk more later.",
+            "Duty calls. Take care!",
+        ]
     
-    def _get_pair_key(self, agent_a: str, agent_b: str) -> str:
-        """Get consistent key for agent pair"""
-        return "_".join(sorted([agent_a, agent_b]))
-    
-    def should_start_conversation(
+    async def should_initiate_conversation(
         self,
-        agent_a: str,
-        agent_b: str,
-        relationship_strength: float,
-        agent_a_extraversion: float,
-        same_location: bool
+        initiator_name: str,
+        initiator_role: str,
+        target_name: str,
+        target_role: str,
+        context: str,
+        relevant_memories: List[str] = None
     ) -> Tuple[bool, str]:
         """
-        Determine if agent_a should start a conversation with agent_b.
+        Decide if an agent should initiate a conversation.
         
+        Args:
+            initiator_name: Name of potential initiator
+            initiator_role: Their role
+            target_name: Name of potential conversation partner
+            target_role: Their role
+            context: Current situation/location
+            relevant_memories: Recent memories about the target
+            
         Returns:
-            (should_start, reason)
+            (should_talk, topic) - Whether to talk and suggested topic
         """
-        if not same_location:
-            return False, "not same location"
+        if not self.llm_client:
+            # Default behavior: 50% chance if in same location
+            import random
+            should_talk = random.random() > 0.5
+            topic = "general check-in"
+            return (should_talk, topic)
         
-        pair_key = self._get_pair_key(agent_a, agent_b)
+        memories_context = ""
+        if relevant_memories:
+            memories_context = "\n".join(f"- {m}" for m in relevant_memories[-5:])
         
-        # Check if already in conversation
-        if pair_key in self.active_conversations:
-            return False, "already in conversation"
-        
-        # Check cooldown - don't chat too frequently
-        if pair_key in self.last_interaction:
-            time_since = (datetime.now() - self.last_interaction[pair_key]).total_seconds()
-            if time_since < 300:  # 5 minute cooldown (in sim time)
-                return False, "talked recently"
-        
-        # Probability based on personality and relationship
-        import random
-        base_prob = 0.3
-        
-        # Extraverts more likely to initiate
-        prob = base_prob + (agent_a_extraversion * 0.3)
-        
-        # Stronger relationships more likely
-        prob += (relationship_strength / 100) * 0.2
-        
-        if random.random() < prob:
-            return True, "natural conversation"
-        
-        return False, "not in mood"
-    
-    def start_conversation(
-        self,
-        initiator: str,
-        target: str,
-        location: str,
-        relationship_strength: float,
-        topic: str = None
-    ) -> Conversation:
-        """Start a new conversation between two agents"""
-        pair_key = self._get_pair_key(initiator, target)
-        conv_id = f"{pair_key}_{datetime.now().timestamp()}"
-        
-        # Determine relationship tier
-        if relationship_strength >= 70:
-            tier = "close"
-        elif relationship_strength >= 40:
-            tier = "neutral"
-        else:
-            tier = "distant"
-        
-        # Create conversation
-        conversation = Conversation(
-            id=conv_id,
-            participants=[initiator, target],
-            location=location,
-            topic=topic or "general",
-            conversation_type=ConversationType.GREETING
-        )
-        
-        # Generate opening line
-        import random
-        greeting = random.choice(self.GREETING_TEMPLATES[tier])
-        opening = greeting.format(name=target.split()[0])  # First name
-        
-        conversation.add_turn(initiator, opening)
-        
-        self.active_conversations[pair_key] = conversation
-        self.last_interaction[pair_key] = datetime.now()
-        
-        return conversation
-    
-    async def generate_response(
-        self,
-        conversation: Conversation,
-        responder: str,
-        responder_role: str,
-        responder_personality: Dict[str, float],
-        responder_mood: str,
-        llm_client: Any = None
-    ) -> str:
-        """Generate contextual response using LLM"""
-        if not llm_client:
-            return self._generate_fallback_response(conversation, responder)
-        
-        # Build prompt
-        context = conversation.to_prompt_context()
-        last_speaker = conversation.turns[-1].speaker if conversation.turns else "Unknown"
-        last_content = conversation.turns[-1].content if conversation.turns else ""
-        
-        prompt = f"""You are {responder}, a {responder_role} at ISRO's Aryabhata Station on the Moon.
+        prompt = f"""You are {initiator_name}, a {initiator_role} at Aryabhata Station on the Moon.
 
-Your personality:
-- Extraversion: {responder_personality.get('extraversion', 0.5):.1f}
-- Agreeableness: {responder_personality.get('agreeableness', 0.5):.1f}
-- Current mood: {responder_mood}
+You just noticed {target_name} ({target_role}) nearby.
 
-{context}
+Current situation: {context}
 
-{last_speaker} just said: "{last_content}"
+Your recent memories about {target_name}:
+{memories_context if memories_context else "- No recent memories about this person"}
 
-Generate a natural, in-character response. Keep it brief (1-2 sentences).
-Consider your personality and mood. If appropriate, ask a follow-up question.
+Should you initiate a conversation? Consider:
+1. Do you have something to discuss with them?
+2. Is now an appropriate time?
+3. What topic would be natural to bring up?
 
-Respond with ONLY the dialogue, no quotes or attribution."""
+Respond in JSON format:
+{{"should_talk": true/false, "topic": "topic if should_talk is true", "reason": "brief internal thought"}}"""
 
         try:
-            response = await llm_client.generate_content_async(prompt)
-            text = response.text.strip()
-            # Clean up response
-            text = text.replace(f"{responder}:", "").strip()
-            text = text.strip('"').strip("'")
-            return text
+            response = await self.llm_client.generate_content_async(prompt)
+            
+            # Parse response
+            json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
+            if json_match:
+                data = json.loads(json_match.group())
+                return (data.get("should_talk", False), data.get("topic", "general conversation"))
         except Exception as e:
-            print(f"Conversation LLM error: {e}")
-            return self._generate_fallback_response(conversation, responder)
+            print(f"Error in conversation decision: {e}")
+        
+        return (False, "")
     
-    def _generate_fallback_response(self, conversation: Conversation, responder: str) -> str:
-        """Generate simple response without LLM"""
-        import random
+    async def start_conversation(
+        self,
+        initiator_name: str,
+        initiator_role: str,
+        initiator_personality: str,
+        target_name: str,
+        target_role: str,
+        target_personality: str,
+        topic: str,
+        location: str,
+        initiator_memories: List[str] = None,
+        target_memories: List[str] = None
+    ) -> ConversationContext:
+        """
+        Start a new conversation between two agents.
         
-        if not conversation.turns:
-            return "Hello there."
+        Args:
+            initiator_name: Who's starting the conversation
+            initiator_role: Their role
+            initiator_personality: Their personality traits
+            target_name: Who they're talking to
+            target_role: Their role
+            target_personality: Their personality traits
+            topic: What to talk about
+            location: Where the conversation is happening
+            initiator_memories: Initiator's relevant memories
+            target_memories: Target's relevant memories
+            
+        Returns:
+            ConversationContext with first utterance
+        """
+        context = ConversationContext(
+            initiator=initiator_name,
+            target=target_name,
+            topic=topic,
+            location=location,
+            start_time=datetime.now(),
+            topics_discussed=[topic]
+        )
         
-        last_turn = conversation.turns[-1]
+        # Generate first utterance
+        first_utterance = await self.generate_utterance(
+            speaker_name=initiator_name,
+            speaker_role=initiator_role,
+            speaker_personality=initiator_personality,
+            listener_name=target_name,
+            listener_role=target_role,
+            topic=topic,
+            conversation_history=[],
+            relevant_memories=initiator_memories or [],
+            is_opening=True
+        )
         
-        # If greeting
-        if any(word in last_turn.content.lower() for word in ["hello", "hi", "hey", "good"]):
-            responses = [
-                "Hello! How are you?",
-                "Hi! Good to see you.",
-                "Hey, doing well thanks. You?",
-                "Greetings! How's everything?"
-            ]
-            return random.choice(responses)
+        context.turns.append((initiator_name, first_utterance))
         
-        # If question
-        if last_turn.is_question:
-            responses = [
-                "I think it's going well.",
-                "Yes, I believe so.",
-                "Everything seems fine from my end.",
-                "Let me think about that..."
-            ]
-            return random.choice(responses)
+        # Store active conversation
+        conv_key = self._get_conversation_key(initiator_name, target_name)
+        self.active_conversations[conv_key] = context
         
-        # General responses
-        responses = [
-            "I see, that's interesting.",
-            "Makes sense to me.",
-            "I agree with that.",
-            "That's good to know.",
-            "Right, I understand."
+        return context
+    
+    async def generate_utterance(
+        self,
+        speaker_name: str,
+        speaker_role: str,
+        speaker_personality: str,
+        listener_name: str,
+        listener_role: str,
+        topic: str,
+        conversation_history: List[Tuple[str, str]],
+        relevant_memories: List[str],
+        is_opening: bool = False,
+        is_closing: bool = False
+    ) -> str:
+        """
+        Generate a single utterance in a conversation.
+        
+        Args:
+            speaker_name: Who is speaking
+            speaker_role: Their role
+            speaker_personality: Their personality traits
+            listener_name: Who they're speaking to
+            listener_role: Their role
+            topic: Current topic
+            conversation_history: Previous turns
+            relevant_memories: Speaker's relevant memories
+            is_opening: Is this the first utterance?
+            is_closing: Should this end the conversation?
+            
+        Returns:
+            The generated utterance
+        """
+        if not self.llm_client:
+            # Use templates if no LLM
+            import random
+            if is_opening:
+                template = random.choice(self.greeting_templates)
+                return template.format(target=listener_name.split()[0])
+            elif is_closing:
+                return random.choice(self.ending_templates)
+            else:
+                return random.choice(self.response_templates)
+        
+        # Build conversation history string
+        history_str = ""
+        if conversation_history:
+            history_lines = []
+            for speaker, text in conversation_history[-6:]:  # Last 6 turns
+                history_lines.append(f"{speaker}: {text}")
+            history_str = "\n".join(history_lines)
+        
+        # Build memories string
+        memories_str = ""
+        if relevant_memories:
+            memories_str = "\n".join(f"- {m}" for m in relevant_memories[-5:])
+        
+        context_note = ""
+        if is_opening:
+            context_note = "This is the START of the conversation. Greet them and bring up the topic naturally."
+        elif is_closing:
+            context_note = "This is the END of the conversation. Wrap up naturally and say goodbye."
+        else:
+            context_note = "Continue the conversation naturally. Stay on topic but allow for natural flow."
+        
+        prompt = f"""You are {speaker_name}, a {speaker_role} at ISRO's Aryabhata Station on the Moon.
+
+Personality: {speaker_personality}
+
+You're talking to {listener_name} ({listener_role}) about: {topic}
+
+Your relevant memories:
+{memories_str if memories_str else "- No specific memories about this topic"}
+
+Conversation so far:
+{history_str if history_str else "(Just starting)"}
+
+{context_note}
+
+Generate your next line of dialogue. Be natural and in-character. Keep it 1-3 sentences.
+Respond with ONLY the dialogue, no quotes or speaker label."""
+
+        try:
+            response = await self.llm_client.generate_content_async(prompt)
+            utterance = response.text.strip()
+            
+            # Clean up response
+            utterance = utterance.strip('"\'')
+            if utterance.startswith(f"{speaker_name}:"):
+                utterance = utterance[len(f"{speaker_name}:"):].strip()
+            
+            return utterance
+        except Exception as e:
+            print(f"Error generating utterance: {e}")
+            import random
+            return random.choice(self.response_templates)
+    
+    async def should_end_conversation(
+        self,
+        context: ConversationContext,
+        last_utterance: str
+    ) -> Tuple[bool, str]:
+        """
+        Determine if conversation should end naturally.
+        
+        Args:
+            context: Current conversation context
+            last_utterance: The most recent thing said
+            
+        Returns:
+            (should_end, reason)
+        """
+        # Minimum turns not reached
+        if len(context.turns) < context.minimum_turns:
+            return (False, "")
+        
+        # Maximum turns reached
+        if len(context.turns) >= context.max_turns:
+            return (True, "max_turns_reached")
+        
+        # Check for natural ending phrases
+        ending_phrases = [
+            "see you", "talk later", "got to go", "i should go",
+            "need to get back", "duty calls", "back to work",
+            "goodbye", "bye", "take care", "catch you later"
         ]
-        return random.choice(responses)
+        
+        lower_utterance = last_utterance.lower()
+        for phrase in ending_phrases:
+            if phrase in lower_utterance:
+                return (True, "natural_ending")
+        
+        if not self.llm_client:
+            # Without LLM, use probability based on turn count
+            import random
+            end_prob = (len(context.turns) - context.minimum_turns) / context.max_turns
+            if random.random() < end_prob:
+                return (True, "random_ending")
+            return (False, "")
+        
+        # Use LLM to determine if conversation has naturally concluded
+        history_str = "\n".join(f"{s}: {t}" for s, t in context.turns[-4:])
+        
+        prompt = f"""Analyze this conversation snippet:
+
+{history_str}
+
+Has this conversation reached a natural ending point? Consider:
+- Have they covered the topic sufficiently?
+- Is there an awkward pause or conclusion?
+- Did someone signal they need to leave?
+
+Respond with JSON: {{"should_end": true/false, "reason": "brief reason"}}"""
+
+        try:
+            response = await self.llm_client.generate_content_async(prompt)
+            json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
+            if json_match:
+                data = json.loads(json_match.group())
+                return (data.get("should_end", False), data.get("reason", ""))
+        except Exception as e:
+            print(f"Error checking conversation end: {e}")
+        
+        return (False, "")
     
-    def continue_conversation(
+    async def continue_conversation(
         self,
-        agent_a: str,
-        agent_b: str,
-        speaker: str,
-        content: str,
-        emotion: str = "neutral"
-    ) -> Optional[DialogueTurn]:
-        """Add a turn to an existing conversation"""
-        pair_key = self._get_pair_key(agent_a, agent_b)
+        initiator_name: str,
+        initiator_role: str,
+        initiator_personality: str,
+        target_name: str,
+        target_role: str,
+        target_personality: str,
+        initiator_memories: List[str] = None,
+        target_memories: List[str] = None
+    ) -> Optional[ConversationContext]:
+        """
+        Continue an active conversation with the next turn.
         
-        if pair_key not in self.active_conversations:
+        Returns the updated context, or None if conversation ended.
+        """
+        conv_key = self._get_conversation_key(initiator_name, target_name)
+        context = self.active_conversations.get(conv_key)
+        
+        if not context:
             return None
         
-        conversation = self.active_conversations[pair_key]
-        turn = conversation.add_turn(speaker, content, emotion)
+        # Determine whose turn it is
+        last_speaker = context.turns[-1][0] if context.turns else context.initiator
+        if last_speaker == context.initiator:
+            current_speaker = context.target
+            current_role = target_role
+            current_personality = target_personality
+            current_memories = target_memories or []
+            listener_name = context.initiator
+            listener_role = initiator_role
+        else:
+            current_speaker = context.initiator
+            current_role = initiator_role
+            current_personality = initiator_personality
+            current_memories = initiator_memories or []
+            listener_name = context.target
+            listener_role = target_role
         
-        # End conversation after too many turns
-        if len(conversation.turns) >= 6:
-            self.end_conversation(agent_a, agent_b)
+        # Check if we should end
+        if context.turns:
+            should_end, reason = await self.should_end_conversation(
+                context, context.turns[-1][1]
+            )
+            if should_end:
+                context.should_end = True
+                context.end_reason = reason
+                return context
         
-        return turn
+        # Generate next utterance
+        is_closing = len(context.turns) >= context.max_turns - 1
+        
+        utterance = await self.generate_utterance(
+            speaker_name=current_speaker,
+            speaker_role=current_role,
+            speaker_personality=current_personality,
+            listener_name=listener_name,
+            listener_role=listener_role,
+            topic=context.topic,
+            conversation_history=context.turns,
+            relevant_memories=current_memories,
+            is_closing=is_closing
+        )
+        
+        context.turns.append((current_speaker, utterance))
+        
+        # Check again after adding turn
+        if is_closing or len(context.turns) >= context.max_turns:
+            context.should_end = True
+            context.end_reason = "max_turns_reached"
+        
+        return context
     
-    def end_conversation(self, agent_a: str, agent_b: str) -> Optional[Conversation]:
-        """End an active conversation"""
-        pair_key = self._get_pair_key(agent_a, agent_b)
-        
-        if pair_key not in self.active_conversations:
-            return None
-        
-        conversation = self.active_conversations.pop(pair_key)
-        conversation.end()
-        
-        # Store in history
-        if pair_key not in self.conversation_history:
-            self.conversation_history[pair_key] = []
-        
-        self.conversation_history[pair_key].append(conversation)
-        
-        # Keep only last 10 conversations per pair
-        self.conversation_history[pair_key] = self.conversation_history[pair_key][-10:]
-        
-        return conversation
-    
-    def get_active_conversation(self, agent_a: str, agent_b: str) -> Optional[Conversation]:
-        """Get active conversation between two agents"""
-        pair_key = self._get_pair_key(agent_a, agent_b)
-        return self.active_conversations.get(pair_key)
-    
-    def get_conversation_history(self, agent_a: str, agent_b: str) -> List[Conversation]:
-        """Get conversation history between two agents"""
-        pair_key = self._get_pair_key(agent_a, agent_b)
-        return self.conversation_history.get(pair_key, [])
-    
-    def get_conversation_summary_for_memory(
+    async def run_full_conversation(
         self,
-        agent_a: str,
-        agent_b: str
-    ) -> Optional[str]:
-        """Get summary of last conversation for memory storage"""
-        history = self.get_conversation_history(agent_a, agent_b)
-        if not history:
-            return None
+        initiator_name: str,
+        initiator_role: str,
+        initiator_personality: str,
+        target_name: str,
+        target_role: str,
+        target_personality: str,
+        topic: str,
+        location: str,
+        initiator_memories: List[str] = None,
+        target_memories: List[str] = None,
+        max_turns: int = 8
+    ) -> ConversationResult:
+        """
+        Run a complete conversation between two agents.
         
-        last_conv = history[-1]
-        return last_conv.get_summary()
+        This executes the full back-and-forth dialogue and returns
+        the complete result with summaries.
+        
+        Args:
+            All agent info and context
+            max_turns: Maximum number of turns
+            
+        Returns:
+            ConversationResult with full dialogue and summaries
+        """
+        # Start conversation
+        context = await self.start_conversation(
+            initiator_name=initiator_name,
+            initiator_role=initiator_role,
+            initiator_personality=initiator_personality,
+            target_name=target_name,
+            target_role=target_role,
+            target_personality=target_personality,
+            topic=topic,
+            location=location,
+            initiator_memories=initiator_memories,
+            target_memories=target_memories
+        )
+        context.max_turns = max_turns
+        
+        # Continue until natural end or max turns
+        while not context.should_end:
+            context = await self.continue_conversation(
+                initiator_name=initiator_name,
+                initiator_role=initiator_role,
+                initiator_personality=initiator_personality,
+                target_name=target_name,
+                target_role=target_role,
+                target_personality=target_personality,
+                initiator_memories=initiator_memories,
+                target_memories=target_memories
+            )
+            if context is None:
+                break
+        
+        # Generate summary
+        summary = await self.summarize_conversation(context)
+        
+        # Generate memories for each participant
+        initiator_memory = await self.generate_conversation_memory(
+            context, initiator_name
+        )
+        target_memory = await self.generate_conversation_memory(
+            context, target_name
+        )
+        
+        # Calculate duration (rough estimate based on turns)
+        duration = len(context.turns) * 2  # ~2 min per exchange
+        
+        # Clean up
+        conv_key = self._get_conversation_key(initiator_name, target_name)
+        if conv_key in self.active_conversations:
+            del self.active_conversations[conv_key]
+        
+        return ConversationResult(
+            participants=[initiator_name, target_name],
+            turns=context.turns,
+            duration_minutes=duration,
+            topics=context.topics_discussed,
+            summary=summary,
+            memories_for_initiator=[initiator_memory],
+            memories_for_target=[target_memory]
+        )
+    
+    async def summarize_conversation(
+        self,
+        context: ConversationContext
+    ) -> str:
+        """
+        Create a summary of the conversation for logging/display.
+        """
+        if not context.turns:
+            return "No conversation occurred."
+        
+        if not self.llm_client:
+            # Basic summary without LLM
+            num_turns = len(context.turns)
+            return (f"{context.initiator} and {context.target} had a "
+                    f"{num_turns}-turn conversation about {context.topic} "
+                    f"at {context.location}.")
+        
+        history_str = "\n".join(f"{s}: {t}" for s, t in context.turns)
+        
+        prompt = f"""Summarize this conversation in 1-2 sentences:
+
+{history_str}
+
+Focus on what was discussed and any important outcomes or agreements."""
+
+        try:
+            response = await self.llm_client.generate_content_async(prompt)
+            return response.text.strip()
+        except Exception as e:
+            print(f"Error summarizing conversation: {e}")
+            return (f"{context.initiator} and {context.target} discussed "
+                    f"{context.topic} at {context.location}.")
+    
+    async def generate_conversation_memory(
+        self,
+        context: ConversationContext,
+        agent_name: str
+    ) -> str:
+        """
+        Generate a memory about the conversation from a specific agent's POV.
+        """
+        if not context.turns:
+            return ""
+        
+        other_agent = (context.target if agent_name == context.initiator 
+                       else context.initiator)
+        
+        if not self.llm_client:
+            return f"I had a conversation with {other_agent} about {context.topic}."
+        
+        # Get this agent's utterances
+        my_utterances = [t for s, t in context.turns if s == agent_name]
+        their_utterances = [t for s, t in context.turns if s == other_agent]
+        
+        prompt = f"""You are {agent_name}. You just finished talking to {other_agent} about {context.topic}.
+
+What they said (highlights):
+{chr(10).join('- ' + u for u in their_utterances[-3:])}
+
+What you said (highlights):
+{chr(10).join('- ' + u for u in my_utterances[-3:])}
+
+Write a brief (1-2 sentence) memory of this conversation from your perspective.
+Start with "I talked with..." or "I had a conversation with..."."""
+
+        try:
+            response = await self.llm_client.generate_content_async(prompt)
+            return response.text.strip()
+        except Exception as e:
+            print(f"Error generating conversation memory: {e}")
+            return f"I talked with {other_agent} about {context.topic}."
+    
+    def _get_conversation_key(self, agent1: str, agent2: str) -> str:
+        """Create consistent conversation key for two agents"""
+        return "|".join(sorted([agent1, agent2]))
+    
+    def get_active_conversation(
+        self,
+        agent_name: str
+    ) -> Optional[ConversationContext]:
+        """
+        Get any active conversation involving an agent.
+        """
+        for key, context in self.active_conversations.items():
+            if agent_name in key:
+                return context
+        return None
+    
+    def end_all_conversations(self):
+        """Force end all active conversations"""
+        self.active_conversations.clear()
 
 
-# Global conversation engine instance
-conversation_engine = ConversationEngine()
+# Helper function to create choreographer with project's LLM client
+def create_choreographer_with_llm() -> ConversationChoreographer:
+    """
+    Create a ConversationChoreographer with the project's LLM client.
+    
+    This integrates with the existing PARL engine.
+    """
+    try:
+        from ..parl.parl_engine import parl_engine
+        
+        # Create a wrapper that matches what Choreographer expects
+        class EngineWrapper:
+            def __init__(self, engine):
+                self.engine = engine
+                
+            async def generate_content_async(self, prompt: str):
+                # Return an object with .text attribute
+                response_text = await self.engine._call_llm(prompt)
+                if not response_text:
+                    response_text = ""
+                
+                class Response:
+                    def __init__(self, text):
+                        self.text = text
+                
+                return Response(response_text)
+
+        return ConversationChoreographer(EngineWrapper(parl_engine))
+    except Exception as e:
+        print(f"Could not load LLM client: {e}")
+        return ConversationChoreographer()

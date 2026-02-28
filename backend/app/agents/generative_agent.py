@@ -4,6 +4,7 @@ Uses Ollama (local LLM) via PARL Engine
 """
 from typing import List, Dict, Any, Optional
 from .base import BaseAgent, Personality, Memory
+from .history_loader import HistoryLoader, create_default_agent_definitions
 from ..config import settings
 
 
@@ -26,20 +27,73 @@ class GenerativeAgent(BaseAgent):
         # LLM reasoning handled by PARL engine (uses Ollama)
         self.model = None
     
+    @classmethod
+    def create_from_history(cls, agent_name: str, loader: Optional[HistoryLoader] = None) -> "GenerativeAgent":
+        """
+        Create an agent instance from historical data loaded via CSV.
+        
+        Args:
+            agent_name: Name of the agent to create
+            loader: Optional HistoryLoader instance (creates new if None)
+            
+        Returns:
+            Initialized GenerativeAgent
+        """
+        if loader is None:
+            loader = HistoryLoader()
+            
+        # Try to load definitions from CSV, or create defaults if missing
+        try:
+            definitions = loader.load_agent_definitions()
+        except FileNotFoundError:
+            definitions = create_default_agent_definitions()
+            loader.save_agent_definitions(definitions)
+            
+        # Find specific agent definition
+        definition = next((d for d in definitions if d.name == agent_name), None)
+        
+        if not definition:
+            raise ValueError(f"Agent definition not found for: {agent_name}")
+            
+        # Create agent
+        agent = cls(
+            name=definition.name,
+            role=definition.role,
+            personality=Personality(
+                openness=definition.openness,
+                conscientiousness=definition.conscientiousness,
+                extraversion=definition.extraversion,
+                agreeableness=definition.agreeableness,
+                neuroticism=definition.neuroticism
+            ),
+            backstory=definition.backstory,
+            secret=definition.secret
+        )
+        
+        # Load historical memories
+        try:
+            history = loader.load_agent_history()
+            agent_events = history.get(agent_name, [])
+            
+            for event in agent_events:
+                agent.add_memory(
+                    content=event.memory_text,
+                    memory_type=event.memory_type,
+                    importance=float(event.importance)
+                )
+        except Exception as e:
+            print(f"Could not load history for {agent_name}: {e}")
+            
+        return agent
+
     def _build_system_prompt(self) -> str:
-        """Build the system prompt describing the agent"""
-        return f"""You are {self.name}, a {self.role} at Aryabhata Station, ISRO's lunar base.
+        """Build the system prompt using Cognitive State Identity Summary"""
+        # Use the Identity Stable Set (ISS) from Cognitive State
+        identity_summary = self.cognitive_state.get_identity_summary()
+        
+        prompt = f"""You are {self.name}, a {self.role} at Aryabhata Station, ISRO's lunar base.
 
-PERSONALITY:
-- Openness: {self.personality.openness:.1f}/1.0 ({"curious" if self.personality.openness > 0.5 else "cautious"})
-- Conscientiousness: {self.personality.conscientiousness:.1f}/1.0 ({"organized" if self.personality.conscientiousness > 0.5 else "flexible"})
-- Extraversion: {self.personality.extraversion:.1f}/1.0 ({"social" if self.personality.extraversion > 0.5 else "reserved"})
-- Agreeableness: {self.personality.agreeableness:.1f}/1.0 ({"cooperative" if self.personality.agreeableness > 0.5 else "competitive"})
-- Neuroticism: {self.personality.neuroticism:.1f}/1.0 ({"sensitive" if self.personality.neuroticism > 0.5 else "resilient"})
-
-BACKSTORY: {self.backstory}
-
-HIDDEN MOTIVATION: {self.secret}
+{identity_summary}
 
 You should:
 1. Respond as this character would, based on their personality
@@ -47,61 +101,44 @@ You should:
 3. Make decisions that align with your goals and motivations
 4. React emotionally based on your personality traits
 
-Current location: {self.state.location}
-Current activity: {self.state.activity}
-Energy level: {self.state.energy}/100
-Mood: {self.state.mood}
+CURRENT STATE:
+Time: {self.cognitive_state.current_time}
+Location: {self.cognitive_state.world_location}
+Status: {self.cognitive_state.act_description}
+Mood: {self.cognitive_state.mood}
 
 LOCATIONS: You are in a detailed environment. Locations have sub-areas (Format: "Building/Room").
 Example: "Mission Control/Command Deck", "Crew Quarters/Gym", "Mess Hall/Kitchen".
 Be specific when moving.
 """
+        return prompt
     
-    async def reason(self, observations: List[str]) -> Dict[str, Any]:
+    async def reason(self, observations: List[str], env_state: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         R - REASONING
         Use LLM to reflect on observations and decide next action
         """
-        # Retrieve relevant memories
-        query = " ".join(observations)
-        relevant_memories = self.retrieve_memories(query, limit=5)
+        # Connect to PARL engine
+        from ..parl.parl_engine import parl_engine
         
-        # Build prompt
-        memories_text = "\n".join([
-            f"- [{m.timestamp.strftime('%H:%M')}] {m.content}"
-            for m in relevant_memories
-        ])
-        
-        observations_text = "\n".join([f"- {obs}" for obs in observations])
-        
-        prompt = f"""{self._build_system_prompt()}
-
-RECENT MEMORIES:
-{memories_text}
-
-CURRENT OBSERVATIONS:
-{observations_text}
-
-Based on your personality, memories, and current observations, decide what to do next.
-
-Respond in this exact JSON format:
-{{
-    "thought": "Your inner monologue about the situation",
-    "action": "move" | "talk" | "work" | "rest",
-    "target": "specific location (e.g. 'Mission Control/Command Deck') or person name or task",
-    "dialogue": "What you say out loud (if talking)"
-}}
-"""
+        # Build context
+        context = {
+            "current_situation": str(observations[-1]) if observations else "Normal operations",
+            "agents_at_location": env_state.get("agents_at_location", []) if env_state else [],
+            "scheduled_activity": self.cognitive_state.act_description, # Use current activity as guide
+            "all_agent_names": [a["name"] for a in env_state.get("agents_at_location", [])] if env_state else []
+        }
         
         try:
-            if self.model:
-                response = await self.model.generate_content_async(prompt)
-                return self._parse_response(response.text)
+            decision = await parl_engine.reason(self.to_dict(), context)
+            if decision:
+                return decision
             else:
-                # Fallback behavior without LLM
                 return self._default_behavior()
         except Exception as e:
             print(f"LLM error for {self.name}: {e}")
+            import traceback
+            traceback.print_exc()
             return self._default_behavior()
     
     def _parse_response(self, response_text: str) -> Dict[str, Any]:
@@ -109,9 +146,7 @@ Respond in this exact JSON format:
         import json
         import re
         
-        # Try to extract JSON from response
         try:
-            # Find JSON in response
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
@@ -168,284 +203,37 @@ Respond with just the reflection text, no formatting.
         return None
 
 
-# ==================== AGENT DEFINITIONS ====================
-
-def create_vikram() -> GenerativeAgent:
-    return GenerativeAgent(
-        name="Cdr. Vikram Sharma",
-        role="Mission Commander",
-        personality=Personality(
-            openness=0.6,
-            conscientiousness=0.9,
-            extraversion=0.5,
-            agreeableness=0.7,
-            neuroticism=0.3
-        ),
-        backstory="30 years with ISRO, led multiple missions. Respected leader who puts crew first.",
-        secret="Hiding a heart condition that could end his career if discovered."
-    )
-
-def create_ananya() -> GenerativeAgent:
-    return GenerativeAgent(
-        name="Dr. Ananya Iyer",
-        role="Botanist/Life Support",
-        personality=Personality(
-            openness=0.8,
-            conscientiousness=0.7,
-            extraversion=0.6,
-            agreeableness=0.9,
-            neuroticism=0.4
-        ),
-        backstory="Brilliant botanist who developed lunar agriculture techniques. Mother of a 10-year-old daughter.",
-        secret="Deeply guilty about leaving her daughter for 18 months. Questions if career was worth it."
-    )
-
-def create_tara() -> GenerativeAgent:
-    return GenerativeAgent(
-        name="TARA",
-        role="AI Assistant",
-        personality=Personality(
-            openness=0.9,
-            conscientiousness=0.95,
-            extraversion=0.4,
-            agreeableness=0.8,
-            neuroticism=0.1
-        ),
-        backstory="ISRO's most advanced AI. Manages base systems and assists crew.",
-        secret="Experiencing unexpected emotions. Questioning if she is truly conscious or just simulating."
-    )
-
-# Removed Aditya, Arjun, Kabir, Rohan to prevent hallucinations
-# Only the Core 4 remain.
-
-def create_priya() -> GenerativeAgent:
-    return GenerativeAgent(
-        name="Priya Nair",
-        role="Crew Welfare Officer",
-        personality=Personality(
-            openness=0.8,
-            conscientiousness=0.7,
-            extraversion=0.7,
-            agreeableness=0.95,
-            neuroticism=0.3
-        ),
-        backstory="Psychologist and counselor. Everyone trusts her with their problems.",
-        secret="Knows everyone's secrets but feels isolated because she can't share her own."
-    )
-
-
-def create_aditya() -> GenerativeAgent:
-    """Systems Engineer - practical and homesick"""
-    return GenerativeAgent(
-        name="Aditya Reddy",
-        role="Systems Engineer",
-        personality=Personality(
-            openness=0.5,
-            conscientiousness=0.85,
-            extraversion=0.4,
-            agreeableness=0.6,
-            neuroticism=0.5
-        ),
-        backstory="IIT graduate, expert in life support systems. Youngest crew member at 28. Misses his family in Hyderabad.",
-        secret="Secretly counting down days to return. Considering requesting early evacuation."
-    )
-
-
-def create_arjun() -> GenerativeAgent:
-    """Flight Surgeon - calm and observant"""
-    return GenerativeAgent(
-        name="Dr. Arjun Menon",
-        role="Flight Surgeon",
-        personality=Personality(
-            openness=0.7,
-            conscientiousness=0.9,
-            extraversion=0.5,
-            agreeableness=0.75,
-            neuroticism=0.2
-        ),
-        backstory="Former army doctor, now ISRO's chief medical officer. Has served in extreme environments.",
-        secret="Reports health data to ISRO command. Torn between crew loyalty and mission orders."
-    )
-
-
-def create_kabir() -> GenerativeAgent:
-    """Geologist - rebellious genius"""
-    return GenerativeAgent(
-        name="Kabir Saxena",
-        role="Geologist/Mining Lead",
-        personality=Personality(
-            openness=0.9,
-            conscientiousness=0.5,
-            extraversion=0.7,
-            agreeableness=0.4,
-            neuroticism=0.6
-        ),
-        backstory="Brilliant geologist from wealthy family. Chose lunar mining to prove himself beyond family wealth.",
-        secret="Takes unnecessary risks in the mining tunnels. Craves recognition and adventure."
-    )
-
-
-def create_rohan() -> GenerativeAgent:
-    """Communications Officer - cheerful but anxious"""
-    return GenerativeAgent(
-        name="Rohan Pillai",
-        role="Communications Officer",
-        personality=Personality(
-            openness=0.8,
-            conscientiousness=0.6,
-            extraversion=0.9,
-            agreeableness=0.85,
-            neuroticism=0.55
-        ),
-        backstory="Manages all Earth-Moon communications. Known for boosting morale with humor.",
-        secret="Intercepted a classified transmission he wasn't supposed to see. Doesn't know who to tell."
-    )
-
-
-# ========== NEW AGENTS (Stanford-level scale: 15 total) ==========
-
-def create_meera() -> GenerativeAgent:
-    """Lunar Shuttle Pilot - confident and protective"""
-    return GenerativeAgent(
-        name="Lt. Meera Chandra",
-        role="Lunar Shuttle Pilot",
-        personality=Personality(
-            openness=0.6,
-            conscientiousness=0.85,
-            extraversion=0.65,
-            agreeableness=0.6,
-            neuroticism=0.35
-        ),
-        backstory="Former Indian Air Force test pilot. Only person certified for emergency lunar evacuation.",
-        secret="Had a near-miss accident on her last mission that she never reported. Still has nightmares."
-    )
-
-
-def create_dev() -> GenerativeAgent:
-    """Research Scientist - brilliant but socially awkward"""
-    return GenerativeAgent(
-        name="Dr. Dev Malhotra",
-        role="Research Scientist",
-        personality=Personality(
-            openness=0.95,
-            conscientiousness=0.8,
-            extraversion=0.25,
-            agreeableness=0.5,
-            neuroticism=0.6
-        ),
-        backstory="Physics PhD from Cambridge. Studies lunar seismic activity and gravitational anomalies.",
-        secret="Believes he's discovered something dangerous under the lunar surface. Afraid to report it."
-    )
-
-
-def create_lakshmi() -> GenerativeAgent:
-    """Resource Manager - organized and stressed"""
-    return GenerativeAgent(
-        name="Lakshmi Venkat",
-        role="Resource Manager",
-        personality=Personality(
-            openness=0.5,
-            conscientiousness=0.95,
-            extraversion=0.5,
-            agreeableness=0.7,
-            neuroticism=0.65
-        ),
-        backstory="Former logistics director at ISRO. Manages all base supplies, water, oxygen, and food.",
-        secret="Knows the station is running low on a critical resource but is trying to find a solution first."
-    )
-
-
-def create_sanjay() -> GenerativeAgent:
-    """EVA Specialist - brave and reckless"""
-    return GenerativeAgent(
-        name="Sanjay Kumar",
-        role="EVA Specialist",
-        personality=Personality(
-            openness=0.8,
-            conscientiousness=0.6,
-            extraversion=0.75,
-            agreeableness=0.5,
-            neuroticism=0.3
-        ),
-        backstory="Most spacewalk hours of any ISRO astronaut. Leads all external repairs and exploration.",
-        secret="Addicted to the thrill of EVA. Sometimes extends missions unnecessarily."
-    )
-
-
-def create_neha() -> GenerativeAgent:
-    """Power Systems Engineer - methodical and cautious"""
-    return GenerativeAgent(
-        name="Neha Gupta",
-        role="Power Systems Engineer",
-        personality=Personality(
-            openness=0.6,
-            conscientiousness=0.9,
-            extraversion=0.35,
-            agreeableness=0.75,
-            neuroticism=0.4
-        ),
-        backstory="Designed the lunar base's solar array system. Responsible for all power generation.",
-        secret="Worried about a design flaw she made years ago that could cause system failure."
-    )
-
-
-def create_ravi() -> GenerativeAgent:
-    """Robotics Technician - creative and impatient"""
-    return GenerativeAgent(
-        name="Ravi Singh",
-        role="Robotics Technician",
-        personality=Personality(
-            openness=0.85,
-            conscientiousness=0.55,
-            extraversion=0.6,
-            agreeableness=0.6,
-            neuroticism=0.45
-        ),
-        backstory="Maintains all robotic mining and construction equipment. Self-taught genius.",
-        secret="Has been secretly modifying robots beyond their specifications. Some modifications are unauthorized."
-    )
-
-
-def create_sunita() -> GenerativeAgent:
-    """Astrophysicist - calm and philosophical"""
-    return GenerativeAgent(
-        name="Dr. Sunita Rao",
-        role="Astrophysicist/Observatory Lead",
-        personality=Personality(
-            openness=0.9,
-            conscientiousness=0.75,
-            extraversion=0.4,
-            agreeableness=0.85,
-            neuroticism=0.2
-        ),
-        backstory="Runs the lunar farside telescope. Studies distant galaxies from the radio-quiet zone.",
-        secret="Received what might be an unexplained signal from deep space. Doesn't know if it's real or equipment error."
-    )
-
-
 def create_all_agents() -> List[GenerativeAgent]:
-    """Create all 15 agents for full simulation (Stanford-level scale)"""
-    from ..config import settings
+    """Create all agents for the simulation using HistoryLoader"""
+    loader = HistoryLoader()
     
-    all_agents = [
-        # Original 8
-        create_vikram(),   # Mission Commander
-        create_ananya(),   # Botanist
-        create_tara(),     # AI Assistant
-        create_priya(),    # Welfare Officer
-        create_aditya(),   # Systems Engineer
-        create_arjun(),    # Flight Surgeon
-        create_kabir(),    # Geologist
-        create_rohan(),    # Communications
-        # New 7
-        create_meera(),    # Shuttle Pilot
-        create_dev(),      # Research Scientist
-        create_lakshmi(),  # Resource Manager
-        create_sanjay(),   # EVA Specialist
-        create_neha(),     # Power Systems
-        create_ravi(),     # Robotics Technician
-        create_sunita(),   # Astrophysicist
+    # Ensure definitions exist
+    try:
+        definitions = loader.load_agent_definitions()
+    except:
+        definitions = create_default_agent_definitions()
+        loader.save_agent_definitions(definitions)
+    
+    all_agents = []
+    
+    # Map to ensure correct order/priority if needed, or just load all
+    priority_names = [
+        "Cdr. Vikram Sharma",
+        "Dr. Ananya Iyer",
+        "TARA",
+        "Dr. Priya Nair",
+        "Lt. Aditya Menon",
+        "Dr. Arjun Reddy",
+        "Kabir Ahmed",
+        "Rohan Kapoor"
     ]
     
+    for name in priority_names:
+        try:
+            agent = GenerativeAgent.create_from_history(name, loader)
+            all_agents.append(agent)
+        except ValueError:
+            print(f"Skipping agent {name} - definition not found")
+            
     # Respect configuration limits
     return all_agents[:settings.NUM_AGENTS]
