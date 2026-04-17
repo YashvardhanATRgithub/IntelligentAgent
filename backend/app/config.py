@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Settings:
-    # LLM Provider: "groq", "ollama", or "cerebras"
+    # LLM Provider: "groq", "ollama", "cerebras", or "openrouter"
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "groq")
     
     # Groq Configuration (Cloud API - Fast but rate limited)
@@ -15,6 +15,11 @@ class Settings:
     CEREBRAS_API_KEY: str = os.getenv("CEREBRAS_API_KEY", "")
     CEREBRAS_MODEL: str = os.getenv("CEREBRAS_MODEL", "llama-3.3-70b")
     CEREBRAS_API_URL: str = os.getenv("CEREBRAS_API_URL", "https://api.cerebras.ai/v1/chat/completions")
+    
+    # OpenRouter Configuration (Cloud API - Many models, pay-per-token)
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3-0324")
+    OPENROUTER_API_URL: str = os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions")
     
     # Ollama Configuration (Local - Unlimited, requires Ollama running)
     OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")

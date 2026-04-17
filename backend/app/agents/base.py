@@ -138,9 +138,9 @@ class BaseAgent(ABC):
         
         if action == "move":
             # Update cognitive state location
-            self.cognitive_state.world_location = target
+            self.cognitive_state.world_location = target or ""
             self.cognitive_state.start_action(
-                address=target,
+                address=target or "",
                 duration=10,
                 description=f"Moving to {target}",
                 emoji="🚶"
@@ -149,7 +149,7 @@ class BaseAgent(ABC):
             
         elif action == "talk":
             self.cognitive_state.start_action(
-                address=self.cognitive_state.world_location,
+                address=self.cognitive_state.world_location or "",
                 duration=5,
                 description=f"Talking to {target}",
                 emoji="💬"
@@ -159,7 +159,7 @@ class BaseAgent(ABC):
             
         elif action == "work":
             self.cognitive_state.start_action(
-                address=self.cognitive_state.world_location,
+                address=self.cognitive_state.world_location or "",
                 duration=60,
                 description=f"Working on {target}",
                 emoji="💼"
@@ -168,7 +168,7 @@ class BaseAgent(ABC):
             
         elif action == "rest":
             self.cognitive_state.start_action(
-                address=self.cognitive_state.world_location,
+                address=self.cognitive_state.world_location or "",
                 duration=30,
                 description="Resting",
                 emoji="😴"
@@ -180,13 +180,14 @@ class BaseAgent(ABC):
     # ==================== REASONING ====================
     
     @abstractmethod
-    async def reason(self, observations: List[str]) -> str:
+    async def reason(self, observations: List[str]) -> Dict[str, Any]:
         """
         R - REASONING
         Reflect on observations and memories, decide next action
         Must be implemented by subclass with LLM integration
+        Returns a dict with keys: action, target, thought, dialogue
         """
-        pass
+        return {}  # Abstract: overridden by subclass
     
     def retrieve_memories(self, query: str, limit: int = 5) -> List[Memory]:
         """Retrieve most relevant memories for a query"""
@@ -229,14 +230,14 @@ class BaseAgent(ABC):
             self.relationships[agent_name] = max(0, min(100, current + delta))
             
         # Check for reflection trigger
-        self.cognitive_state.trigger_reflection_check(importance)
+        self.cognitive_state.trigger_reflection_check(int(importance))
     
     def add_memory(
         self,
         content: str,
         memory_type: str = "observation",
         importance: float = 5.0,
-        related_agents: List[str] = None
+        related_agents: Optional[List[str]] = None
     ) -> Memory:
         """Add a new memory to the stream AND the global memory store"""
         memory = Memory(
@@ -245,7 +246,7 @@ class BaseAgent(ABC):
             importance=importance,
             memory_type=memory_type,
             related_agents=related_agents or [],
-            location=self.cognitive_state.world_location
+            location=self.cognitive_state.world_location or ""
         )
         self.memory_stream.append(memory)
         
@@ -258,7 +259,7 @@ class BaseAgent(ABC):
                 memory_type=memory_type,
                 importance=importance,
                 related_agents=related_agents or [],
-                location=self.cognitive_state.world_location
+                location=self.cognitive_state.world_location or ""
             )
         except Exception as e:
             pass  # Don't crash if memory store unavailable
@@ -278,7 +279,7 @@ class BaseAgent(ABC):
         decision = await self.reason(observations)
         
         # A - Act
-        action_result = self.act(decision["action"], decision.get("target"))
+        action_result = self.act(decision.get("action", ""), decision.get("target"))
         
         # L - Learn
         self.learn(action_result)

@@ -1,6 +1,6 @@
 """
 PARL Engine - Orchestrates the Perception, Action, Reasoning, Learning loop
-Supports Groq, Cerebras, and Ollama for LLM reasoning
+Supports Groq, Cerebras, Ollama, and OpenRouter for LLM reasoning
 """
 import httpx
 import json
@@ -87,7 +87,7 @@ class PARLEngine:
     """
     PARL (Perception, Action, Reasoning, Learning) Engine
     Provides LLM-powered decision making for agents.
-    Supports three providers: Groq (cloud), Cerebras (cloud, fast), and Ollama (local).
+    Supports four providers: Groq (cloud), Cerebras (cloud, fast), Ollama (local), and OpenRouter (cloud, many models).
     """
     
     def __init__(self):
@@ -101,6 +101,19 @@ class PARLEngine:
             print(f"   Host: {self.ollama_host}")
             print(f"   ⚡ NO RATE LIMITS - Unlimited local inference!")
             self.rate_limiter = None
+        
+        elif self.llm_provider == "openrouter":
+            if not settings.OPENROUTER_API_KEY:
+                raise ValueError("OPENROUTER_API_KEY is required. Set LLM_PROVIDER=ollama for local mode.")
+            
+            self.openrouter_api_key = settings.OPENROUTER_API_KEY.strip()
+            self.openrouter_url = settings.OPENROUTER_API_URL
+            self.openrouter_model = settings.OPENROUTER_MODEL
+            print(f"🌐 PARL Engine initialized with OpenRouter ({self.openrouter_model})")
+            # OpenRouter: pay-per-token, no strict RPM limits
+            self.rate_limiter = RateLimiter(rpm_limit=60, tpm_limit=100000)
+            print(f"   💰 Pay-per-token model — no hard rate limits")
+            print(f"   🚀 Using {self.openrouter_model}")
         
         elif self.llm_provider == "cerebras":
             if not settings.CEREBRAS_API_KEY:
@@ -156,6 +169,8 @@ class PARLEngine:
                     # Route to appropriate LLM provider
                     if self.llm_provider == "ollama":
                         result = await self._call_ollama(prompt)
+                    elif self.llm_provider == "openrouter":
+                        result = await self._call_openrouter(agent, prompt)
                     elif self.llm_provider == "cerebras":
                         result = await self._call_cerebras(agent, prompt)
                     else:
@@ -268,6 +283,40 @@ class PARLEngine:
                 raise Exception("Rate Limit Exceeded")
             else:
                 print(f"Cerebras Error {response.status_code}: {response.text}")
+        return None
+
+    async def _call_openrouter(self, agent: Dict[str, Any], prompt: str) -> Optional[Dict[str, Any]]:
+        """Call OpenRouter API (OpenAI-compatible)"""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                self.openrouter_url,
+                headers={
+                    "Authorization": f"Bearer {self.openrouter_api_key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://aryabhata-station.local",
+                    "X-Title": "ISRO Aryabhata Station Simulation"
+                },
+                json={
+                    "model": self.openrouter_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.7,
+                    "max_tokens": 150
+                }
+            )
+            if response.status_code == 200:
+                data = response.json()
+                text = data["choices"][0]["message"]["content"]
+                
+                # Track Usage
+                usage = data.get("usage", {})
+                total_tokens = usage.get("total_tokens", 600)
+                
+                return self._parse_response(text)
+            elif response.status_code == 429:
+                print(f"⚠️ OpenRouter Rate Limit 429 Hit! Backing off...")
+                raise Exception("Rate Limit Exceeded")
+            else:
+                print(f"OpenRouter Error {response.status_code}: {response.text}")
         return None
 
     def _fallback_decision(self, agent: Dict[str, Any]) -> Dict[str, Any]:
@@ -481,7 +530,7 @@ Respond in JSON ONLY:
             pass
         return None
 
-    async def generate_reflection(self, agent: Dict[str, Any], memories: List[str] = None) -> Optional[str]:
+    async def generate_reflection(self, agent: Dict[str, Any], memories: Optional[List[str]] = None) -> Optional[str]:
         """
         Stanford-level reflection: Generate high-level insights from recent memories.
         
@@ -508,10 +557,10 @@ Focus on:
 Format: One insight per line, in first person ("I notice...", "I realize...", "I wonder...").
 Keep each insight brief (1-2 sentences)."""
 
-        response = await self._call_llm(prompt) if self.llm_provider in ("ollama", "cerebras") else None
+        response = await self._call_llm(prompt) if self.llm_provider in ("ollama", "cerebras", "openrouter") else None
         
         # For Groq, skip reflection to save rate limit (Cerebras has generous limits)
-        if self.llm_provider not in ("ollama", "cerebras") and not response:
+        if self.llm_provider not in ("ollama", "cerebras", "openrouter") and not response:
             # Generate simple fallback reflection
             return f"I've been busy with my duties. I should stay focused on the mission."
         
@@ -521,6 +570,9 @@ Keep each insight brief (1-2 sentences)."""
         """Generic LLM call for reflections and other uses"""
         if self.llm_provider == "ollama":
             result = await self._call_ollama_raw(prompt)
+            return result
+        elif self.llm_provider == "openrouter":
+            result = await self._call_openrouter_raw(prompt)
             return result
         elif self.llm_provider == "cerebras":
             result = await self._call_cerebras_raw(prompt)
@@ -539,6 +591,32 @@ Keep each insight brief (1-2 sentences)."""
                     },
                     json={
                         "model": self.cerebras_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.7,
+                        "max_tokens": 200
+                    }
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    return data["choices"][0]["message"]["content"]
+            except:
+                pass
+        return None
+    
+    async def _call_openrouter_raw(self, prompt: str) -> Optional[str]:
+        """Call OpenRouter and return raw text response"""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.post(
+                    self.openrouter_url,
+                    headers={
+                        "Authorization": f"Bearer {self.openrouter_api_key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://aryabhata-station.local",
+                        "X-Title": "ISRO Aryabhata Station Simulation"
+                    },
+                    json={
+                        "model": self.openrouter_model,
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": 0.7,
                         "max_tokens": 200

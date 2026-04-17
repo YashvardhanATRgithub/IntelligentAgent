@@ -31,7 +31,7 @@ class SimulationEngine:
     Main simulation engine that orchestrates all agents
     """
     
-    def __init__(self, on_update: Callable[[Dict[str, Any]], Any] = None):
+    def __init__(self, on_update: Optional[Callable[[Dict[str, Any]], Any]] = None):
         self.environment = Environment()
         self.agents: List[GenerativeAgent] = []
         self.is_running = False
@@ -63,12 +63,12 @@ class SimulationEngine:
             agent.cognitive_state.world_location = location
             # Explicitly register agent in environment hierarchy
             # Use 'None' or empty string as from_loc since they are new
-            self.environment.move_agent(agent.id, agent.name, None, location)
+            self.environment.move_agent(agent.id, agent.name, "", location)
             
-            # Record initial state
+            # Record initial state (in-character, no 4th-wall-breaking)
             memory_store.add_memory(
                 agent_name=agent.name,
-                content=f"Simulation started. I am at {location}.",
+                content=f"Started my shift at {location}. Ready to begin today's work.",
                 memory_type="observation",
                 importance=5.0
             )
@@ -77,12 +77,16 @@ class SimulationEngine:
         return self.get_state()
     
     async def start(self):
-        """Start the simulation loop"""
+        """Start or resume the simulation loop"""
         if self.is_running:
             return
         
         self.is_running = True
-        self.initialize()
+        
+        # Only initialize agents if this is the FIRST start (not a resume)
+        if not self.agents:
+            self.initialize()
+        
         self.environment.start()
         
         # Broadcast start
@@ -123,7 +127,15 @@ class SimulationEngine:
                 agent.cognitive_state.current_time = sim_datetime
                 agent.cognitive_state.update_cooldowns()
             
-            # Process agents (round-robin)
+            # Advance ALL moving agents every step (not just the 2 being processed)
+            # This ensures position updates are real-time regardless of round-robin
+            for agent in self.agents:
+                if (agent.cognitive_state.action_status == ActionStatus.IN_PROGRESS 
+                    and agent.cognitive_state.path_computed
+                    and not agent.cognitive_state.is_action_finished()):
+                    await self._handle_movement_step(agent)
+            
+            # Process agents for NEW decisions (round-robin, 2 per step)
             start_idx = ((self.step_count - 1) * self.agents_per_step) % len(self.agents)
             agents_to_process = []
             for i in range(self.agents_per_step):
@@ -141,11 +153,16 @@ class SimulationEngine:
             
             # Record frame (full state)
             state = self.get_state()
+            
+            # DEBUG: Show agent locations each step
+            locs = {a["name"].split()[0]: a["location"] for a in state["agents"]}
+            print(f"📍 Step {self.step_count} locations: {locs}")
+            
             self.recorder.record_frame(
                 step=self.step_count,
                 simulation_time=state["time"],
                 agents=state["agents"],
-                conversations=None, # TODO: Track active conversations in state
+                conversations=[], # TODO: Track active conversations in state
                 events=state["world"].get("events", [])
             )
             
@@ -220,9 +237,7 @@ class SimulationEngine:
                     agent.cognitive_state.end_action()
                 # Fall through to reasoning below
             else:
-                # Action still in progress — handle movement or let time tick
-                if agent.cognitive_state.path_computed:
-                    await self._handle_movement_step(agent)
+                # Action still in progress — movement is handled globally in the loop
                 # For conversations and timed actions, just let time tick
                 return
         
@@ -251,10 +266,10 @@ class SimulationEngine:
 
     async def _execute_decision(self, agent: GenerativeAgent, decision: Dict):
         """Execute the action decided by the agent"""
-        action = decision.get("action")
-        target = decision.get("target")
-        dialogue = decision.get("dialogue")
-        thought = decision.get("thought")
+        action = decision.get("action", "")
+        target: str = decision.get("target", "")
+        dialogue: str = decision.get("dialogue", "")
+        thought: str = decision.get("thought", "")
         
         # Log thought
         if thought:
@@ -265,14 +280,17 @@ class SimulationEngine:
             # Use Navigator to plan path
             path_result = self.navigator.find_path(agent.cognitive_state.world_location, target)
             if path_result.path:
+                # Duration = number of hops * simulation_speed (so 1 hop = 1 step)
+                path_hops = len(path_result.path) - 1  # -1 because first node is current location
+                travel_duration = max(path_hops * int(self.simulation_speed), path_result.travel_time_minutes)
                 agent.cognitive_state.start_action(
                     address=target,
-                    duration=path_result.travel_time_minutes,
+                    duration=travel_duration,
                     description=f"moving to {target}",
                     emoji="🚶"
                 )
                 agent.cognitive_state.set_path(path_result.path)
-                print(f"🚶 [Move] {agent.name}: {agent.cognitive_state.world_location} → {target} (path: {path_result.path}, {path_result.travel_time_minutes}min)")
+                print(f"🚶 [Move] {agent.name}: {agent.cognitive_state.world_location} → {target} (path: {path_result.path}, {travel_duration}min)")
                 agent.add_memory(f"Started walking to {target}", "observation", 3.0)
             else:
                 print(f"⚠️ [Move] {agent.name}: No path found from '{agent.cognitive_state.world_location}' to '{target}' — {path_result.description}")
@@ -300,7 +318,7 @@ class SimulationEngine:
                     else:
                         # Calculate conversation end time (2 sim-minutes from now)
                         conv_duration = 2  # minutes in sim time
-                        conv_end_time = agent.cognitive_state.current_time + timedelta(minutes=conv_duration)
+                        conv_end_time = (agent.cognitive_state.current_time or datetime.now()) + timedelta(minutes=conv_duration)
                         
                         # Start via Choreographer (fire-and-forget, don't depend on it for lifecycle)
                         try:

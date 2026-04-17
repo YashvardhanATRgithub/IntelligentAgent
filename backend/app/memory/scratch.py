@@ -239,7 +239,7 @@ Current date: {date_str}"""
         duration: int,
         description: str,
         emoji: str = "🙂",
-        event: Tuple[str, str, str] = None
+        event: Optional[Tuple[str, str, str]] = None
     ):
         """Begin a new action"""
         self.action_address = address
@@ -264,7 +264,7 @@ Current date: {date_str}"""
         self.planned_path = []
         self.path_position = 0
     
-    def start_conversation(self, partner: str, end_time: datetime = None):
+    def start_conversation(self, partner: str, end_time: Optional[datetime] = None):
         """Begin conversation with another agent"""
         self.chatting_with = partner
         self.conversation = []

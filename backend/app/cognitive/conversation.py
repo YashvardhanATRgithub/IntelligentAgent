@@ -98,7 +98,7 @@ class ConversationManager:
         self,
         speaker: Dict[str, Any],
         listener: Dict[str, Any],
-        initial_message: str = None,
+        initial_message: Optional[str] = None,
         context: str = ""
     ) -> str:
         """

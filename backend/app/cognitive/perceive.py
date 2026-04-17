@@ -136,7 +136,7 @@ class PerceptionEngine:
         current_location: str,
         simulation_time: str,
         world_state: Dict[str, Any],
-        relationship_scores: Dict[str, float] = None
+        relationship_scores: Optional[Dict[str, float]] = None
     ) -> PerceivedEnvironment:
         """
         Main perception function - filters world state into agent's perception.

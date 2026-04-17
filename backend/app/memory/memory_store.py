@@ -266,10 +266,10 @@ class MemoryStore:
         content: str,
         memory_type: str = "observation",
         importance: float = 5.0,
-        related_agents: List[str] = None,
+        related_agents: Optional[List[str]] = None,
         location: str = "",
         source: str = "",
-        propagation_chain: List[str] = None
+        propagation_chain: Optional[List[str]] = None
     ) -> str:
         """Add a memory with semantic embedding and FAISS indexing"""
         # Initialize if needed
@@ -441,7 +441,7 @@ class MemoryStore:
         self, 
         agent_name: str, 
         reflection: str, 
-        based_on: List[str] = None,
+        based_on: Optional[List[str]] = None,
         importance: float = 8.0
     ) -> str:
         """Add high-importance reflection memory"""

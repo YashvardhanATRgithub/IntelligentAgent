@@ -102,7 +102,7 @@ class ConversationChoreographer:
         target_name: str,
         target_role: str,
         context: str,
-        relevant_memories: List[str] = None
+        relevant_memories: Optional[List[str]] = None
     ) -> Tuple[bool, str]:
         """
         Decide if an agent should initiate a conversation.
@@ -169,8 +169,8 @@ Respond in JSON format:
         target_personality: str,
         topic: str,
         location: str,
-        initiator_memories: List[str] = None,
-        target_memories: List[str] = None
+        initiator_memories: Optional[List[str]] = None,
+        target_memories: Optional[List[str]] = None
     ) -> ConversationContext:
         """
         Start a new conversation between two agents.
@@ -391,8 +391,8 @@ Respond with JSON: {{"should_end": true/false, "reason": "brief reason"}}"""
         target_name: str,
         target_role: str,
         target_personality: str,
-        initiator_memories: List[str] = None,
-        target_memories: List[str] = None
+        initiator_memories: Optional[List[str]] = None,
+        target_memories: Optional[List[str]] = None
     ) -> Optional[ConversationContext]:
         """
         Continue an active conversation with the next turn.
@@ -466,8 +466,8 @@ Respond with JSON: {{"should_end": true/false, "reason": "brief reason"}}"""
         target_personality: str,
         topic: str,
         location: str,
-        initiator_memories: List[str] = None,
-        target_memories: List[str] = None,
+        initiator_memories: Optional[List[str]] = None,
+        target_memories: Optional[List[str]] = None,
         max_turns: int = 8
     ) -> ConversationResult:
         """
@@ -514,18 +514,23 @@ Respond with JSON: {{"should_end": true/false, "reason": "brief reason"}}"""
                 break
         
         # Generate summary
-        summary = await self.summarize_conversation(context)
-        
-        # Generate memories for each participant
-        initiator_memory = await self.generate_conversation_memory(
-            context, initiator_name
-        )
-        target_memory = await self.generate_conversation_memory(
-            context, target_name
-        )
+        if context is not None:
+            summary = await self.summarize_conversation(context)
+            
+            # Generate memories for each participant
+            initiator_memory = await self.generate_conversation_memory(
+                context, initiator_name
+            )
+            target_memory = await self.generate_conversation_memory(
+                context, target_name
+            )
+        else:
+            summary = "Brief interaction."
+            initiator_memory = f"Had a brief chat with {target_name}."
+            target_memory = f"Had a brief chat with {initiator_name}."
         
         # Calculate duration (rough estimate based on turns)
-        duration = len(context.turns) * 2  # ~2 min per exchange
+        duration = len(context.turns) * 2 if context else 0  # ~2 min per exchange
         
         # Clean up
         conv_key = self._get_conversation_key(initiator_name, target_name)
@@ -534,9 +539,9 @@ Respond with JSON: {{"should_end": true/false, "reason": "brief reason"}}"""
         
         return ConversationResult(
             participants=[initiator_name, target_name],
-            turns=context.turns,
+            turns=context.turns if context else [],
             duration_minutes=duration,
-            topics=context.topics_discussed,
+            topics=context.topics_discussed if context else [],
             summary=summary,
             memories_for_initiator=[initiator_memory],
             memories_for_target=[target_memory]
