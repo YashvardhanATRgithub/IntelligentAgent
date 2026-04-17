@@ -128,11 +128,12 @@ class SimulationEngine:
                 agent.cognitive_state.update_cooldowns()
             
             # Advance ALL moving agents every step (not just the 2 being processed)
-            # This ensures position updates are real-time regardless of round-robin
+            # Key: advance based on remaining path hops, NOT the action timer.
             for agent in self.agents:
-                if (agent.cognitive_state.action_status == ActionStatus.IN_PROGRESS 
-                    and agent.cognitive_state.path_computed
-                    and not agent.cognitive_state.is_action_finished()):
+                cs = agent.cognitive_state
+                if (cs.path_computed
+                    and cs.planned_path
+                    and cs.path_position < len(cs.planned_path) - 1):
                     await self._handle_movement_step(agent)
             
             # Process agents for NEW decisions (round-robin, 2 per step)
